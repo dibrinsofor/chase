@@ -1,0 +1,19 @@
+set shell = ["cmd", "/c"] 
+
+set somevar = 02029a#some_special_key#29d
+
+build:
+    summary: "build main"
+    cmds: "gcc"
+
+tests:
+    uses: build
+    summary: "run all tests"
+    cmds: [ 
+        "type %somevar% > manifest.json",
+        "./test --all"
+    ]
+
+hello:
+    usage: [dir]
+    cmds: "echo %somevar%"
