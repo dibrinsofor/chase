@@ -22,6 +22,7 @@ const (
 	COLON
 	ASTERISK
 	COMMA
+	PERCENT
 
 	// Keywords
 	SET
@@ -132,7 +133,10 @@ func (s *Scanner) Scan() (tok Token, lit string) {
 		return EQUALS_TO, string(ch)
 	case ',':
 		return COMMA, string(ch)
+	case '%':
+		return PERCENT, string(ch)
 	}
+	
 
 	return ILLEGAL, string(ch)
 }

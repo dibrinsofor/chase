@@ -20,7 +20,7 @@ type env struct {
 }
 
 func main() {
-	// e := env{}
+	// e := env{} --> chapter for
 
 	// check if chasefile exists
 	info, err := os.Stat(filename)
@@ -34,12 +34,18 @@ func main() {
 	}
 
 	// do we want to do any linting or add. checks before attempting to parse?
-	ast, err := src.ChasefileParser.ParseBytes(filename, b)
+	// ast, err := src.ChasefileParser.ParseBytes(filename, b)
+	// if err != nil {
+	// 	panic(fmt.Errorf("chase: error parsing chasefile: %w", err))
+	// }
+
+	ast, err := src.ChasefileParser.ParseString(filename, string(b))
 	if err != nil {
 		panic(fmt.Errorf("chase: error parsing chasefile: %w", err))
 	}
 
 	repr.Println(ast)
+	// repr.Println(tokens)
 
 	// if no "set shell" then try sh
 	if runtime.GOOS == "windows" {
