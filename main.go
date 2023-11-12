@@ -1,11 +1,9 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
-	"runtime"
-
-	"github.com/alecthomas/repr"
 
 	"github.com/dibrinsofor/chase/src"
 )
@@ -14,13 +12,13 @@ import (
 
 var filename = "Chasefile"
 
-type env struct {
-	shell []string
-	vars  map[string]string
-}
-
 func main() {
-	// e := env{} --> chapter for
+	// flags -l (list all sprints), -{sprint name}
+	l := flag.Bool("l", false, "list all dashes in the chasefile")
+	// should we want to run more than 1 dash?
+	r := flag.String("r", "", "run specific dash")
+
+	flag.Parse()
 
 	// check if chasefile exists
 	info, err := os.Stat(filename)
@@ -33,22 +31,33 @@ func main() {
 		panic(fmt.Errorf("chase: error opening chasefile: %w", err))
 	}
 
-	// do we want to do any linting or add. checks before attempting to parse?
-	// ast, err := src.ChasefileParser.ParseBytes(filename, b)
-	// if err != nil {
-	// 	panic(fmt.Errorf("chase: error parsing chasefile: %w", err))
-	// }
-
 	ast, err := src.ChasefileParser.ParseString(filename, string(b))
 	if err != nil {
 		panic(fmt.Errorf("chase: error parsing chasefile: %w", err))
 	}
 
-	repr.Println(ast)
-	// repr.Println(tokens)
+	// todo: rename
+	chaseIR := src.Eval(ast)
 
-	// if no "set shell" then try sh
-	if runtime.GOOS == "windows" {
-		// redirect to path for windows
+	// check flags and run commands
+	if *l {
+		src.ListDashes(chaseIR)
+		return
 	}
+
+	_, err = src.SetupEnv(chaseIR)
+	if err != nil {
+		panic(fmt.Errorf("chase: error setting up shell: %w", err))
+	}
+
+	if *r != "" {
+		err := src.ExecDash(chaseIR, r)
+		if err != nil {
+			panic(fmt.Errorf("chase: error running commands: %w", err))
+		}
+	}
+
+	// run all dashes
+	src.ExecAllDashes(chaseIR)
+
 }
