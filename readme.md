@@ -45,3 +45,5 @@ chase tests
 ```
 
 chase expects the custom shell declaration at the top of the file. if it does not exist, commands will be run with any reasonable `sh` (Git bash if on windows)
+
+see [./idea/readme.md](.idea/readme.md) for more
