@@ -1,19 +1,19 @@
-set shell = ["cmd", "/c"] 
+set shell = ["sh", "-c"] 
 
 set somevar = 02029a#some_special_key#29d
 
 build:
+    uses: hello
     summary: "build main"
-    cmds: "gcc"
+    cmds: "cat readme.md"
 
 tests:
     uses: build
     summary: "run all tests"
     cmds: [ 
-        "type %somevar% > manifest.json",
+        "echo $somevar > manifest.json",
         "./test --all"
     ]
 
 hello:
-    usage: [dir]
-    cmds: "echo %somevar%"
+    cmds: "echo $somevar"
