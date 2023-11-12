@@ -11,13 +11,13 @@
 see [sample chasefile](chasefile)
 ```bash
 chase -l
-> build    "build main"     gcc *.c *.h -o main
-  tests    "run all tests"  *multiline
-  hello    [dir]            echo {{ vars.SOMEVAR }}
+  build    summary: "build main"
+  tests    summary: "run all tests"
+  hello    --
 ```
 ```bash
 chase #runs the build task
-chase tests
+chase tests # runs only the test dash
 ```
 
 chase expects the custom shell declaration at the top of the file. if it does not exist, commands will be run with any reasonable `sh` (Git bash if on windows)
