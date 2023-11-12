@@ -3,36 +3,12 @@
 `Chase` is command runner and *potentially* a (forward) build system. Chase primarily reads build specifications from a `chasefile` placed in your outer directory consisting of one or more tasks.
 <!-- (or one of its many variants like, `Chasefile` or `ChaseFile`) -->
 
-<!-- #### Features
-- Easy to use
-- Parallel commands
-- Variables
-- Custom environments?
-- Hopefully not slow -->
+#### todo
+- [ ] Run Parallel commands
+- [ ] Improve UI
 
 #### Using
-```yaml
-set shell = ["cmd", "/c"] 
-
-set SOMEVAR = 02029a#some_special_key#29d
-
-build:
-    summary: "build main"
-    cmds: gcc *.c *.h -o main
-
-tests:
-    uses: build
-    summary: "run all tests"
-    cmds: [ # arrays instead of pipes for multiple cmds
-        "type {{ SOMEVAR }} > manifest.json",
-        "./test --all"
-    ]
-
-hello:
-    usage: [dir]
-    cmds: echo {{ SOMEVAR }}
-```
-
+see [sample chasefile](chasefile)
 ```bash
 chase -l
 > build    "build main"     gcc *.c *.h -o main
