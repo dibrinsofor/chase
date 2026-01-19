@@ -12,12 +12,11 @@ type ChaseEnv struct {
 	dashes []Dash // list of name -> cmds
 }
 
-// todo: change dash to sprint?
 type Dash struct {
-	name     string
-	inherits string
-	summary  string
-	cmds     []string
+	name         string
+	declaredDeps []string
+	summary      string
+	cmds         []string
 }
 
 func Eval(ast *Chasefile) *ChaseEnv {
@@ -70,9 +69,17 @@ func Eval(ast *Chasefile) *ChaseEnv {
 					}
 				} else if v.Key == "uses" {
 					if v.Value.String != nil {
-						dash.inherits = *v.Value.String
+						dash.declaredDeps = append(dash.declaredDeps, *v.Value.String)
 					} else if v.Value.Var != nil {
-						dash.inherits = *v.Value.Var
+						dash.declaredDeps = append(dash.declaredDeps, *v.Value.Var)
+					} else if len(v.Value.List) > 0 {
+						for _, dep := range v.Value.List {
+							if dep.String != nil {
+								dash.declaredDeps = append(dash.declaredDeps, *dep.String)
+							} else if dep.Var != nil {
+								dash.declaredDeps = append(dash.declaredDeps, *dep.Var)
+							}
+						}
 					}
 				}
 			}
@@ -150,38 +157,37 @@ func SetupEnv(chase *ChaseEnv) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-// todo: we do not want to have to set env vars twice
 func ExecDash(chase *ChaseEnv, r *string) error {
 	d, exists := nameExists(chase.dashes, *r)
 	if !exists {
 		return fmt.Errorf("'%s' not found", *r)
 	}
 
-	dep, err := hasDeps(d, chase.dashes)
+	deps, err := hasDeps(d, chase.dashes)
 	if err != nil {
 		return err
 	}
 
-	for _, dashCmds := range dep.cmds {
+	for _, dep := range deps {
+		for _, dashCmds := range dep.cmds {
+			cmd := exec.Command(chase.shell[0], chase.shell[1:]...)
+			setEnvVars(cmd, chase)
+			cmd.Args = append(cmd.Args, dashCmds)
 
-		cmd := exec.Command(chase.shell[0], chase.shell[1:]...)
-		setEnvVars(cmd, chase)
-		cmd.Args = append(cmd.Args, dashCmds)
+			out, err := cmd.Output()
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				return fmt.Errorf(string(exitErr.Stderr))
+			} else if execErr, ok := err.(*exec.Error); ok {
+				return fmt.Errorf(execErr.Error())
+			}
 
-		out, err := cmd.Output()
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return fmt.Errorf(string(exitErr.Stderr))
-		} else if execErr, ok := err.(*exec.Error); ok {
-			return fmt.Errorf(execErr.Error())
-		}
-
-		if string(out) != "" {
-			fmt.Print(string(out))
+			if string(out) != "" {
+				fmt.Print(string(out))
+			}
 		}
 	}
 
 	for _, dashCmds := range d.cmds {
-
 		cmd := exec.Command(chase.shell[0], chase.shell[1:]...)
 		setEnvVars(cmd, chase)
 		cmd.Args = append(cmd.Args, dashCmds)
@@ -197,9 +203,6 @@ func ExecDash(chase *ChaseEnv, r *string) error {
 			fmt.Print(string(out))
 		}
 	}
-	// todo: can we run any of these in parallel?
-	// todo: do not repeat commands
-	// trace first full build into some IR. we can make decisions off that
 
 	return nil
 }
@@ -214,15 +217,18 @@ func ExecAllDashes(chase *ChaseEnv) error {
 	return nil
 }
 
-// todo: handle multiple deps
-func hasDeps(d Dash, ds []Dash) (Dash, error) {
-	if d.inherits == "" {
-		return Dash{}, nil
+func hasDeps(d Dash, ds []Dash) ([]Dash, error) {
+	if len(d.declaredDeps) == 0 {
+		return nil, nil
 	}
 
-	deps, exists := nameExists(ds, d.inherits)
-	if !exists {
-		return Dash{}, fmt.Errorf("'%s' not found", d.inherits)
+	var deps []Dash
+	for _, depName := range d.declaredDeps {
+		dep, exists := nameExists(ds, depName)
+		if !exists {
+			return nil, fmt.Errorf("dependency '%s' not found", depName)
+		}
+		deps = append(deps, dep)
 	}
 
 	return deps, nil
