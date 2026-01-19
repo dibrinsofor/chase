@@ -258,10 +258,32 @@ func TestAddNode(t *testing.T) {
 		t.Errorf("AddNode() unexpected error: %v", err)
 	}
 
+	err = dag.AddNode(NewNode("b", "c", nil, nil))
+	if err != nil {
+		t.Errorf("AddNode() unexpected error: %v", err)
+	}
+
+	got := dag.Size()
+	want := 2
+
+	if got != want {
+		t.Errorf("Expected two nodes in graph. Got %d; want %d", got, want)
+	}
+}
+
+func TestAddDuplicateNode(t *testing.T) {
+	dag := NewDAG()
+
+	err := dag.AddNode(NewNode("a", "a", nil, nil))
+	if err != nil {
+		t.Errorf("AddNode() unexpected error: %v", err)
+	}
+
 	err = dag.AddNode(NewNode("a", "a", nil, nil))
 	if err == nil {
 		t.Error("AddNode() should error on duplicate")
 	}
+
 }
 
 func TestNodeState(t *testing.T) {
