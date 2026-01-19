@@ -9,8 +9,12 @@ import (
 type ChaseEnv struct {
 	shell  []string
 	vars   map[string]string
-	dashes []Dash // list of name -> cmds
+	dashes []Dash
 }
+
+func (e *ChaseEnv) Shell() []string         { return e.shell }
+func (e *ChaseEnv) Vars() map[string]string { return e.vars }
+func (e *ChaseEnv) Dashes() []Dash          { return e.dashes }
 
 type Dash struct {
 	name         string
@@ -18,6 +22,11 @@ type Dash struct {
 	summary      string
 	cmds         []string
 }
+
+func (d Dash) Name() string            { return d.name }
+func (d Dash) DeclaredDeps() []string  { return d.declaredDeps }
+func (d Dash) Summary() string         { return d.summary }
+func (d Dash) Cmds() []string          { return d.cmds }
 
 func Eval(ast *Chasefile) *ChaseEnv {
 	e := &ChaseEnv{
