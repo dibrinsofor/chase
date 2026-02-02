@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/dibrinsofor/chase/src"
+	"github.com/dibrinsofor/chase/src/executor"
+	"github.com/dibrinsofor/chase/src/graph"
 )
 
 // todo: add file watcher to detect chasefile in root directory and generate dependency graph
@@ -17,6 +22,7 @@ func main() {
 	l := flag.Bool("l", false, "list all dashes in the chasefile")
 	// should we want to run more than 1 dash?
 	r := flag.String("r", "", "run specific dash")
+	j := flag.Int("j", 0, "number of parallel workers (default: number of CPUs)")
 
 	flag.Parse()
 
@@ -50,14 +56,32 @@ func main() {
 		panic(fmt.Errorf("chase: error setting up shell: %w", err))
 	}
 
+	dag := executor.BuildDAG(chaseIR)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cancel()
+	}()
+
+	var targetDAG *graph.DAG
 	if *r != "" {
-		err := src.ExecDash(chaseIR, r)
-		if err != nil {
-			panic(fmt.Errorf("chase: error running commands: %w", err))
+		targetID := graph.NodeID(*r)
+		if dag.GetNode(targetID) == nil {
+			panic(fmt.Errorf("chase: target '%s' not found", *r))
 		}
+		targetDAG = dag.Subgraph(targetID)
+	} else {
+		targetDAG = dag
 	}
 
-	// run all dashes
-	src.ExecAllDashes(chaseIR)
+	exec := executor.New(targetDAG, chaseIR, *j)
+	if err := exec.Run(ctx); err != nil {
+		panic(fmt.Errorf("chase: error running commands: %w", err))
+	}
 
 }
