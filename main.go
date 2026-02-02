@@ -20,9 +20,9 @@ var filename = "Chasefile"
 func main() {
 	// flags -l (list all sprints), -{sprint name}
 	l := flag.Bool("l", false, "list all dashes in the chasefile")
-	// should we want to run more than 1 dash?
 	r := flag.String("r", "", "run specific dash")
 	j := flag.Int("j", 0, "number of parallel workers (default: number of CPUs)")
+	trace := flag.Bool("trace", false, "enable eBPF file tracing")
 
 	flag.Parse()
 
@@ -79,8 +79,11 @@ func main() {
 		targetDAG = dag
 	}
 
-	exec := executor.New(targetDAG, chaseIR, *j)
-	if err := exec.Run(ctx); err != nil {
+	ex := executor.New(targetDAG, chaseIR, *j)
+	if *trace {
+		ex.EnableTracing()
+	}
+	if err := ex.Run(ctx); err != nil {
 		panic(fmt.Errorf("chase: error running commands: %w", err))
 	}
 
