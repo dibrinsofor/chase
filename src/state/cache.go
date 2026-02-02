@@ -86,8 +86,8 @@ func (bs *BuildState) NeedsBuild(target string) (bool, string) {
 		return true, "no previous build"
 	}
 
-	if len(ts.TracedInputs) == 0 {
-		return true, "no traced inputs"
+	if len(ts.TracedInputs) == 0 && len(ts.TracedOutputs) == 0 {
+		return true, "no traced files"
 	}
 
 	for _, path := range ts.TracedInputs {
