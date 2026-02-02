@@ -11,6 +11,7 @@ import (
 	"github.com/dibrinsofor/chase/src"
 	"github.com/dibrinsofor/chase/src/exec"
 	"github.com/dibrinsofor/chase/src/graph"
+	"github.com/dibrinsofor/chase/src/state"
 )
 
 // todo: add file watcher to detect chasefile in root directory and generate dependency graph
@@ -82,9 +83,20 @@ func main() {
 	ex := executor.New(targetDAG, chaseIR, *j)
 	if *trace {
 		ex.EnableTracing()
+		cache, err := state.Load("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to load state cache: %v\n", err)
+		} else {
+			ex.SetCache(cache)
+		}
 	}
 	if err := ex.Run(ctx); err != nil {
 		panic(fmt.Errorf("chase: error running commands: %w", err))
+	}
+	if *trace {
+		if err := ex.SaveCache(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save state cache: %v\n", err)
+		}
 	}
 
 }
