@@ -23,7 +23,6 @@ func main() {
 	l := flag.Bool("l", false, "list all dashes in the chasefile")
 	r := flag.String("r", "", "run specific dash")
 	j := flag.Int("j", 0, "number of parallel workers (default: number of CPUs)")
-	trace := flag.Bool("trace", false, "enable eBPF file tracing")
 
 	flag.Parse()
 
@@ -80,23 +79,19 @@ func main() {
 		targetDAG = dag
 	}
 
-	ex := executor.New(targetDAG, chaseIR, *j)
-	if *trace {
-		ex.EnableTracing()
-		cache, err := state.Load("")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to load state cache: %v\n", err)
-		} else {
-			ex.SetCache(cache)
-		}
+	cache, err := state.Load("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load state cache: %v\n", err)
+		cache = state.NewBuildState()
 	}
+
+	ex := executor.New(targetDAG, chaseIR, *j, cache)
 	if err := ex.Run(ctx); err != nil {
 		panic(fmt.Errorf("chase: error running commands: %w", err))
 	}
-	if *trace {
-		if err := ex.SaveCache(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save state cache: %v\n", err)
-		}
+
+	if err := ex.SaveCache(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to save state cache: %v\n", err)
 	}
 
 }
