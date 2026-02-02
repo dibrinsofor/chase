@@ -21,12 +21,16 @@ type Dash struct {
 	declaredDeps []string
 	summary      string
 	cmds         []string
+	inputs       []string
+	outputs      []string
 }
 
 func (d Dash) Name() string            { return d.name }
 func (d Dash) DeclaredDeps() []string  { return d.declaredDeps }
 func (d Dash) Summary() string         { return d.summary }
 func (d Dash) Cmds() []string          { return d.cmds }
+func (d Dash) Inputs() []string        { return d.inputs }
+func (d Dash) Outputs() []string       { return d.outputs }
 
 func Eval(ast *Chasefile) *ChaseEnv {
 	e := &ChaseEnv{
@@ -90,6 +94,10 @@ func Eval(ast *Chasefile) *ChaseEnv {
 							}
 						}
 					}
+				} else if v.Key == "inputs" {
+					dash.inputs = parseStringList(v.Value)
+				} else if v.Key == "outputs" {
+					dash.outputs = parseStringList(v.Value)
 				}
 			}
 			e.dashes = append(e.dashes, dash)
@@ -261,4 +269,18 @@ func nameExists(ds []Dash, name string) (Dash, bool) {
 		}
 	}
 	return Dash{}, false
+}
+
+func parseStringList(v *Value) []string {
+	var result []string
+	if v.String != nil {
+		result = append(result, *v.String)
+	} else if len(v.List) > 0 {
+		for _, item := range v.List {
+			if item.String != nil {
+				result = append(result, *item.String)
+			}
+		}
+	}
+	return result
 }

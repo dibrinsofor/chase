@@ -24,7 +24,7 @@ type Assign struct {
 }
 
 type Step struct {
-	Key   string `parser:"@('summary' | 'uses' | 'usage' | 'cmds') ':'"`
+	Key   string `parser:"@('summary' | 'uses' | 'usage' | 'cmds' | 'inputs' | 'outputs') ':'"`
 	Value *Value `parser:" @@"`
 }
 
