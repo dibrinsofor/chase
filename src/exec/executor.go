@@ -103,6 +103,14 @@ func (e *Executor) coordinate(ctx context.Context, jobs chan<- graph.NodeID, res
 
 			if res.Success {
 				e.dag.MarkComplete(res.NodeID)
+				if len(res.FileAccess) > 0 {
+					node := e.dag.GetNode(res.NodeID)
+					if node != nil {
+						inputs, outputs := categorizeAccesses(res.FileAccess)
+						node.InputFiles = inputs
+						node.OutputFiles = outputs
+					}
+				}
 				if res.Output != "" {
 					fmt.Print(res.Output)
 				}
