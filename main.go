@@ -18,11 +18,92 @@ import (
 
 var filename = "Chasefile"
 
+func runLint(env *src.ChaseEnv) {
+	cache, err := state.Load("")
+	if err != nil {
+		fmt.Println("No state cache found. Run a build first to trace dependencies.")
+		return
+	}
+
+	hasIssues := false
+
+	for _, dash := range env.Dashes() {
+		ts := cache.GetTarget(dash.Name())
+		if ts == nil {
+			fmt.Printf("%s:\n  ⚠ no traced data (run build first)\n\n", dash.Name())
+			continue
+		}
+
+		declaredInputs := toSet(dash.Inputs())
+		declaredOutputs := toSet(dash.Outputs())
+		tracedInputs := toSet(ts.TracedInputs)
+		tracedOutputs := toSet(ts.TracedOutputs)
+
+		undeclaredInputs := diff(tracedInputs, declaredInputs)
+		undeclaredOutputs := diff(tracedOutputs, declaredOutputs)
+
+		if len(undeclaredInputs) == 0 && len(undeclaredOutputs) == 0 {
+			fmt.Printf("%s:\n  ✓ all dependencies declared\n\n", dash.Name())
+			continue
+		}
+
+		hasIssues = true
+		fmt.Printf("%s:\n", dash.Name())
+
+		if len(undeclaredInputs) > 0 {
+			fmt.Println("  ⚠ undeclared inputs:")
+			for _, p := range undeclaredInputs {
+				fmt.Printf("    + %s\n", p)
+			}
+		}
+
+		if len(undeclaredOutputs) > 0 {
+			fmt.Println("  ⚠ undeclared outputs:")
+			for _, p := range undeclaredOutputs {
+				fmt.Printf("    + %s\n", p)
+			}
+		}
+
+		fmt.Println()
+		fmt.Println("  Suggested additions:")
+		if len(undeclaredInputs) > 0 {
+			fmt.Printf("    inputs: %v\n", undeclaredInputs)
+		}
+		if len(undeclaredOutputs) > 0 {
+			fmt.Printf("    outputs: %v\n", undeclaredOutputs)
+		}
+		fmt.Println()
+	}
+
+	if hasIssues {
+		os.Exit(1)
+	}
+}
+
+func toSet(slice []string) map[string]bool {
+	set := make(map[string]bool)
+	for _, s := range slice {
+		set[s] = true
+	}
+	return set
+}
+
+func diff(a, b map[string]bool) []string {
+	var result []string
+	for k := range a {
+		if !b[k] {
+			result = append(result, k)
+		}
+	}
+	return result
+}
+
 func main() {
 	// flags -l (list all sprints), -{sprint name}
 	l := flag.Bool("l", false, "list all dashes in the chasefile")
 	r := flag.String("r", "", "run specific dash")
 	j := flag.Int("j", 0, "number of parallel workers (default: number of CPUs)")
+	lint := flag.Bool("lint", false, "compare traced deps vs declared deps")
 
 	flag.Parse()
 
@@ -45,9 +126,13 @@ func main() {
 	// todo: rename
 	chaseIR := src.Eval(ast)
 
-	// check flags and run commands
 	if *l {
 		src.ListDashes(chaseIR)
+		return
+	}
+
+	if *lint {
+		runLint(chaseIR)
 		return
 	}
 
