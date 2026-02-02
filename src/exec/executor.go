@@ -10,6 +10,7 @@ import (
 
 	"github.com/dibrinsofor/chase/src"
 	"github.com/dibrinsofor/chase/src/graph"
+	"github.com/dibrinsofor/chase/src/state"
 	"github.com/dibrinsofor/chase/src/tracer"
 )
 
@@ -26,6 +27,7 @@ type Executor struct {
 	env      *src.ChaseEnv
 	workers  int
 	tracing  bool
+	cache    *state.BuildState
 }
 
 func New(dag *graph.DAG, env *src.ChaseEnv, workers int) *Executor {
@@ -43,6 +45,17 @@ func New(dag *graph.DAG, env *src.ChaseEnv, workers int) *Executor {
 
 func (e *Executor) EnableTracing() {
 	e.tracing = true
+}
+
+func (e *Executor) SetCache(cache *state.BuildState) {
+	e.cache = cache
+}
+
+func (e *Executor) SaveCache() error {
+	if e.cache != nil {
+		return e.cache.Save()
+	}
+	return nil
 }
 
 func (e *Executor) Run(ctx context.Context) error {
@@ -126,6 +139,16 @@ func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
 		return Result{NodeID: id, Success: false, Error: fmt.Errorf("node not found")}
 	}
 
+	if e.cache != nil && e.tracing {
+		needsBuild, reason := e.cache.NeedsBuild(string(id))
+		if !needsBuild {
+			return Result{NodeID: id, Success: true, Output: fmt.Sprintf("[cached] %s\n", id)}
+		}
+		if reason != "" && reason != "no previous build" {
+			fmt.Printf("[rebuild] %s: %s\n", id, reason)
+		}
+	}
+
 	shell := e.env.Shell()
 	var output string
 	var allAccesses []tracer.FileAccess
@@ -154,7 +177,32 @@ func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
 		}
 	}
 
+	if e.cache != nil && e.tracing && len(allAccesses) > 0 {
+		inputs, outputs := categorizeAccesses(allAccesses)
+		e.cache.RecordBuild(string(id), inputs, outputs)
+	}
+
 	return Result{NodeID: id, Success: true, Output: output, FileAccess: allAccesses}
+}
+
+func categorizeAccesses(accesses []tracer.FileAccess) (inputs, outputs []string) {
+	seen := make(map[string]bool)
+	for _, a := range accesses {
+		if seen[a.Path] {
+			continue
+		}
+		seen[a.Path] = true
+
+		switch a.Operation {
+		case tracer.OpRead, tracer.OpOpen:
+			if a.Flags&0x3 == 0 {
+				inputs = append(inputs, a.Path)
+			}
+		case tracer.OpWrite:
+			outputs = append(outputs, a.Path)
+		}
+	}
+	return
 }
 
 func (e *Executor) executeWithTracing(ctx context.Context, cmd *exec.Cmd) (string, []tracer.FileAccess, error) {
