@@ -23,32 +23,23 @@ type Result struct {
 }
 
 type Executor struct {
-	dag      *graph.DAG
-	env      *src.ChaseEnv
-	workers  int
-	tracing  bool
-	cache    *state.BuildState
+	dag     *graph.DAG
+	env     *src.ChaseEnv
+	workers int
+	cache   *state.BuildState
 }
 
-func New(dag *graph.DAG, env *src.ChaseEnv, workers int) *Executor {
+func New(dag *graph.DAG, env *src.ChaseEnv, workers int, cache *state.BuildState) *Executor {
 	if workers <= 0 {
 		workers = runtime.NumCPU()
 	}
 
 	return &Executor{
-		dag:      dag,
-		env:      env,
-		workers:  workers,
-		tracing:  false,
+		dag:     dag,
+		env:     env,
+		workers: workers,
+		cache:   cache,
 	}
-}
-
-func (e *Executor) EnableTracing() {
-	e.tracing = true
-}
-
-func (e *Executor) SetCache(cache *state.BuildState) {
-	e.cache = cache
 }
 
 func (e *Executor) SaveCache() error {
@@ -147,8 +138,11 @@ func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
 		return Result{NodeID: id, Success: false, Error: fmt.Errorf("node not found")}
 	}
 
-	if e.cache != nil && e.tracing {
-		needsBuild, reason := e.cache.NeedsBuild(string(id))
+	needsBuild := true
+	reason := "no previous build"
+
+	if e.cache != nil {
+		needsBuild, reason = e.cache.NeedsBuild(string(id))
 		if !needsBuild {
 			return Result{NodeID: id, Success: true, Output: fmt.Sprintf("[cached] %s\n", id)}
 		}
@@ -169,23 +163,15 @@ func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
 		}
 
-		if e.tracing {
-			out, accesses, err := e.executeWithTracing(ctx, cmd)
-			output += out
-			allAccesses = append(allAccesses, accesses...)
-			if err != nil {
-				return Result{NodeID: id, Success: false, Error: err, Output: output, FileAccess: allAccesses}
-			}
-		} else {
-			out, err := cmd.CombinedOutput()
-			output += string(out)
-			if err != nil {
-				return Result{NodeID: id, Success: false, Error: err, Output: output}
-			}
+		out, accesses, err := e.executeWithTracing(ctx, cmd)
+		output += out
+		allAccesses = append(allAccesses, accesses...)
+		if err != nil {
+			return Result{NodeID: id, Success: false, Error: err, Output: output, FileAccess: allAccesses}
 		}
 	}
 
-	if e.cache != nil && e.tracing && len(allAccesses) > 0 {
+	if e.cache != nil && len(allAccesses) > 0 {
 		inputs, outputs := categorizeAccesses(allAccesses)
 		e.cache.RecordBuild(string(id), inputs, outputs)
 	}
