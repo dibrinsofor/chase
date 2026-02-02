@@ -45,7 +45,7 @@ func TestBuildDAG(t *testing.T) {
 func TestExecutorSimple(t *testing.T) {
 	env := loadTestFixture(t, "simple")
 	dag := BuildDAG(env)
-	exec := New(dag, env, 1)
+	exec := New(dag, env, 1, nil)
 
 	ctx := context.Background()
 	err := exec.Run(ctx)
@@ -62,7 +62,7 @@ func TestExecutorSimple(t *testing.T) {
 func TestExecutorDiamond(t *testing.T) {
 	env := loadTestFixture(t, "diamond")
 	dag := BuildDAG(env)
-	exec := New(dag, env, 2)
+	exec := New(dag, env, 2, nil)
 
 	ctx := context.Background()
 	err := exec.Run(ctx)
@@ -81,7 +81,7 @@ func TestExecutorDiamond(t *testing.T) {
 func TestExecutorCycleDetection(t *testing.T) {
 	env := loadTestFixture(t, "cycle")
 	dag := BuildDAG(env)
-	exec := New(dag, env, 1)
+	exec := New(dag, env, 1, nil)
 
 	ctx := context.Background()
 	err := exec.Run(ctx)
@@ -119,7 +119,7 @@ func TestExecutorParallel(t *testing.T) {
 	}
 	_ = originalExecute
 
-	exec := New(dag, env, 4)
+	exec := New(dag, env, 4, nil)
 	ctx := context.Background()
 	err := exec.Run(ctx)
 	if err != nil {
@@ -137,7 +137,7 @@ func TestExecutorParallel(t *testing.T) {
 func TestExecutorContextCancellation(t *testing.T) {
 	env := loadTestFixture(t, "parallel")
 	dag := BuildDAG(env)
-	exec := New(dag, env, 1)
+	exec := New(dag, env, 1, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -164,7 +164,7 @@ func TestExecutorSubgraph(t *testing.T) {
 		t.Error("subgraph should not contain nodes c or d")
 	}
 
-	exec := New(sub, env, 1)
+	exec := New(sub, env, 1, nil)
 	err := exec.Run(context.Background())
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -175,17 +175,17 @@ func TestExecutorWorkerCount(t *testing.T) {
 	env := loadTestFixture(t, "simple")
 	dag := BuildDAG(env)
 
-	exec := New(dag, env, 0)
+	exec := New(dag, env, 0, nil)
 	if exec.workers <= 0 {
 		t.Error("worker count should default to positive value")
 	}
 
-	exec = New(dag, env, -5)
+	exec = New(dag, env, -5, nil)
 	if exec.workers <= 0 {
 		t.Error("negative worker count should default to positive value")
 	}
 
-	exec = New(dag, env, 8)
+	exec = New(dag, env, 8, nil)
 	if exec.workers != 8 {
 		t.Errorf("expected 8 workers, got %d", exec.workers)
 	}
@@ -194,7 +194,7 @@ func TestExecutorWorkerCount(t *testing.T) {
 func TestExecutorEmptyDAG(t *testing.T) {
 	dag := graph.NewDAG()
 	env := &src.ChaseEnv{}
-	exec := New(dag, env, 1)
+	exec := New(dag, env, 1, nil)
 
 	err := exec.Run(context.Background())
 	if err != nil {
