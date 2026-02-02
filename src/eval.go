@@ -185,9 +185,9 @@ func ExecDash(chase *ChaseEnv, r *string) error {
 
 			out, err := cmd.Output()
 			if exitErr, ok := err.(*exec.ExitError); ok {
-				return fmt.Errorf(string(exitErr.Stderr))
+				return fmt.Errorf("%s", string(exitErr.Stderr))
 			} else if execErr, ok := err.(*exec.Error); ok {
-				return fmt.Errorf(execErr.Error())
+				return fmt.Errorf("%s", execErr.Error())
 			}
 
 			if string(out) != "" {
@@ -203,9 +203,9 @@ func ExecDash(chase *ChaseEnv, r *string) error {
 
 		out, err := cmd.Output()
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return fmt.Errorf(string(exitErr.Stderr))
+			return fmt.Errorf("%s", string(exitErr.Stderr))
 		} else if execErr, ok := err.(*exec.Error); ok {
-			return fmt.Errorf(execErr.Error())
+			return fmt.Errorf("%s", execErr.Error())
 		}
 
 		if string(out) != "" {
