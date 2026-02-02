@@ -1,0 +1,11 @@
+a:
+    uses: c
+    cmds: "echo a"
+
+b:
+    uses: a
+    cmds: "echo b"
+
+c:
+    uses: b
+    cmds: "echo c"

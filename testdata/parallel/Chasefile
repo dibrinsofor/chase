@@ -1,0 +1,11 @@
+task1:
+    cmds: "echo task1"
+
+task2:
+    cmds: "echo task2"
+
+task3:
+    cmds: "echo task3"
+
+task4:
+    cmds: "echo task4"
