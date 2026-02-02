@@ -1,0 +1,11 @@
+task1:
+    cmds: "sleep 0.1 && echo task1"
+
+task2:
+    cmds: "sleep 0.1 && echo task2"
+
+task3:
+    cmds: "sleep 0.1 && echo task3"
+
+task4:
+    cmds: "sleep 0.1 && echo task4"
