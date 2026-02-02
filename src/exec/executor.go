@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -9,19 +10,22 @@ import (
 
 	"github.com/dibrinsofor/chase/src"
 	"github.com/dibrinsofor/chase/src/graph"
+	"github.com/dibrinsofor/chase/src/tracer"
 )
 
 type Result struct {
-	NodeID  graph.NodeID
-	Success bool
-	Error   error
-	Output  string
+	NodeID      graph.NodeID
+	Success     bool
+	Error       error
+	Output      string
+	FileAccess  []tracer.FileAccess
 }
 
 type Executor struct {
-	dag     *graph.DAG
-	env     *src.ChaseEnv
-	workers int
+	dag      *graph.DAG
+	env      *src.ChaseEnv
+	workers  int
+	tracing  bool
 }
 
 func New(dag *graph.DAG, env *src.ChaseEnv, workers int) *Executor {
@@ -30,10 +34,15 @@ func New(dag *graph.DAG, env *src.ChaseEnv, workers int) *Executor {
 	}
 
 	return &Executor{
-		dag:     dag,
-		env:     env,
-		workers: workers,
+		dag:      dag,
+		env:      env,
+		workers:  workers,
+		tracing:  false,
 	}
+}
+
+func (e *Executor) EnableTracing() {
+	e.tracing = true
 }
 
 func (e *Executor) Run(ctx context.Context) error {
@@ -119,6 +128,7 @@ func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
 
 	shell := e.env.Shell()
 	var output string
+	var allAccesses []tracer.FileAccess
 
 	for _, cmdStr := range node.Commands {
 		cmd := exec.CommandContext(ctx, shell[0], append(shell[1:], cmdStr)...)
@@ -128,15 +138,56 @@ func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
 		}
 
-		out, err := cmd.CombinedOutput()
-		output += string(out)
-
-		if err != nil {
-			return Result{NodeID: id, Success: false, Error: err, Output: output}
+		if e.tracing {
+			out, accesses, err := e.executeWithTracing(ctx, cmd)
+			output += out
+			allAccesses = append(allAccesses, accesses...)
+			if err != nil {
+				return Result{NodeID: id, Success: false, Error: err, Output: output, FileAccess: allAccesses}
+			}
+		} else {
+			out, err := cmd.CombinedOutput()
+			output += string(out)
+			if err != nil {
+				return Result{NodeID: id, Success: false, Error: err, Output: output}
+			}
 		}
 	}
 
-	return Result{NodeID: id, Success: true, Output: output}
+	return Result{NodeID: id, Success: true, Output: output, FileAccess: allAccesses}
+}
+
+func (e *Executor) executeWithTracing(ctx context.Context, cmd *exec.Cmd) (string, []tracer.FileAccess, error) {
+	cfg := tracer.DefaultConfig()
+	cfg.FollowChildren = true
+
+	t, err := tracer.New(cfg)
+	if err != nil {
+		out, cmdErr := cmd.CombinedOutput()
+		return string(out), nil, cmdErr
+	}
+
+	var outBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &outBuf
+
+	if err := cmd.Start(); err != nil {
+		return "", nil, err
+	}
+
+	if err := t.Start(ctx, cmd.Process.Pid); err != nil {
+		cmd.Wait()
+		return outBuf.String(), nil, fmt.Errorf("failed to start tracer: %w", err)
+	}
+
+	cmdErr := cmd.Wait()
+
+	accesses, stopErr := t.Stop()
+	if stopErr != nil && cmdErr == nil {
+		cmdErr = stopErr
+	}
+
+	return outBuf.String(), accesses, cmdErr
 }
 
 func BuildDAG(env *src.ChaseEnv) *graph.DAG {
