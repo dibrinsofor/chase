@@ -9,7 +9,7 @@ import (
 	"syscall"
 
 	"github.com/dibrinsofor/chase/src"
-	"github.com/dibrinsofor/chase/src/executor"
+	"github.com/dibrinsofor/chase/src/exec"
 	"github.com/dibrinsofor/chase/src/graph"
 )
 
