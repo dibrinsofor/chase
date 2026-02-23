@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/dibrinsofor/chase/src"
 	"github.com/dibrinsofor/chase/src/graph"
+	"github.com/dibrinsofor/chase/src/ir"
 	"github.com/dibrinsofor/chase/src/state"
 	"github.com/dibrinsofor/chase/src/tracer"
 )
@@ -20,6 +22,7 @@ type Result struct {
 	Error       error
 	Output      string
 	FileAccess  []tracer.FileAccess
+	Processes   []tracer.ProcessInfo
 }
 
 type Executor struct {
@@ -138,6 +141,17 @@ func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
 		return Result{NodeID: id, Success: false, Error: fmt.Errorf("node not found")}
 	}
 
+	// Check if we have a traced command graph from a previous run
+	if e.cache != nil {
+		if gs := e.cache.GetGraphState(string(id)); gs != nil {
+			cmdGraph := ir.FromGraphState(gs, e.cache.Commands)
+			if cmdGraph.Len() > 0 {
+				return e.executeIncremental(ctx, id, node, cmdGraph)
+			}
+		}
+	}
+
+	// Fall back to target-level cache check
 	needsBuild := true
 	reason := "no previous build"
 
@@ -151,9 +165,15 @@ func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
 		}
 	}
 
+	return e.executeWithFullTrace(ctx, id, node)
+}
+
+// executeWithFullTrace runs the user command, traces all subprocesses, and builds the IR.
+func (e *Executor) executeWithFullTrace(ctx context.Context, id graph.NodeID, node *graph.Node) Result {
 	shell := e.env.Shell()
 	var output string
 	var allAccesses []tracer.FileAccess
+	var allProcs []tracer.ProcessInfo
 
 	for _, cmdStr := range node.Commands {
 		cmd := exec.CommandContext(ctx, shell[0], append(shell[1:], cmdStr)...)
@@ -163,20 +183,110 @@ func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
 		}
 
-		out, accesses, err := e.executeWithTracing(ctx, cmd)
+		out, accesses, procs, err := e.executeWithTracing(ctx, cmd)
 		output += out
 		allAccesses = append(allAccesses, accesses...)
+		allProcs = append(allProcs, procs...)
 		if err != nil {
-			return Result{NodeID: id, Success: false, Error: err, Output: output, FileAccess: allAccesses}
+			return Result{NodeID: id, Success: false, Error: err, Output: output, FileAccess: allAccesses, Processes: allProcs}
 		}
 	}
 
 	if e.cache != nil && len(allAccesses) > 0 {
 		inputs, outputs := categorizeAccesses(allAccesses)
 		e.cache.RecordBuild(string(id), inputs, outputs)
+
+		// Build command IR from traced subprocesses if we captured any
+		if len(allProcs) > 0 {
+			cmdGraph := ir.BuildFromTrace(allProcs, allAccesses)
+			e.cache.RecordGraphState(string(id), cmdGraph.ToGraphState())
+			for _, cmd := range cmdGraph.Commands() {
+				e.cache.RecordCommandState(string(cmd.ID), cmd.ToCommandState())
+			}
+			output += fmt.Sprintf("[built] IR with %d commands, %d edges\n",
+				cmdGraph.Len(), cmdGraph.EdgeCount())
+		}
 	}
 
-	return Result{NodeID: id, Success: true, Output: output, FileAccess: allAccesses}
+	return Result{NodeID: id, Success: true, Output: output, FileAccess: allAccesses, Processes: allProcs}
+}
+
+// executeIncremental uses a previously traced command graph to selectively rebuild
+// only the subprocesses whose inputs have changed.
+func (e *Executor) executeIncremental(ctx context.Context, id graph.NodeID, node *graph.Node, cmdGraph *ir.CommandGraph) Result {
+	stale := cmdGraph.GetStale(e.cache)
+
+	if len(stale) == 0 {
+		total := cmdGraph.Len()
+		return Result{
+			NodeID:  id,
+			Success: true,
+			Output:  fmt.Sprintf("[cached] all %d subprocesses unchanged\n", total),
+		}
+	}
+
+	total := cmdGraph.Len()
+	var output string
+	output += fmt.Sprintf("[rebuild] %d of %d subprocesses\n", len(stale), total)
+
+	shell := e.env.Shell()
+	var allAccesses []tracer.FileAccess
+	var allProcs []tracer.ProcessInfo
+
+	for _, cmd := range stale {
+		// Re-run the stale subprocess directly
+		args := strings.Join(cmd.Args, " ")
+		execCmd := exec.CommandContext(ctx, shell[0], append(shell[1:], args)...)
+		execCmd.Env = os.Environ()
+
+		for key, value := range e.env.Vars() {
+			execCmd.Env = append(execCmd.Env, fmt.Sprintf("%s=%s", key, value))
+		}
+
+		out, accesses, procs, err := e.executeWithTracing(ctx, execCmd)
+		output += out
+		allAccesses = append(allAccesses, accesses...)
+		allProcs = append(allProcs, procs...)
+
+		if err != nil {
+			return Result{NodeID: id, Success: false, Error: err, Output: output, FileAccess: allAccesses, Processes: allProcs}
+		}
+
+		// Update the cache for this individual command
+		if e.cache != nil {
+			cmd.UpdateHashes()
+			e.cache.RecordCommandState(string(cmd.ID), cmd.ToCommandState())
+		}
+	}
+
+	// Re-record the target-level state
+	if e.cache != nil {
+		inputs, outputs := categorizeAccesses(allAccesses)
+		existingInputs, existingOutputs := cmdGraph.AllFiles()
+		inputs = mergeUnique(existingInputs, inputs)
+		outputs = mergeUnique(existingOutputs, outputs)
+		e.cache.RecordBuild(string(id), inputs, outputs)
+	}
+
+	return Result{NodeID: id, Success: true, Output: output, FileAccess: allAccesses, Processes: allProcs}
+}
+
+func mergeUnique(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	var result []string
+	for _, s := range a {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	for _, s := range b {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 func categorizeAccesses(accesses []tracer.FileAccess) (inputs, outputs []string) {
@@ -199,14 +309,14 @@ func categorizeAccesses(accesses []tracer.FileAccess) (inputs, outputs []string)
 	return
 }
 
-func (e *Executor) executeWithTracing(ctx context.Context, cmd *exec.Cmd) (string, []tracer.FileAccess, error) {
+func (e *Executor) executeWithTracing(ctx context.Context, cmd *exec.Cmd) (string, []tracer.FileAccess, []tracer.ProcessInfo, error) {
 	cfg := tracer.DefaultConfig()
 	cfg.FollowChildren = true
 
 	t, err := tracer.New(cfg)
 	if err != nil {
 		out, cmdErr := cmd.CombinedOutput()
-		return string(out), nil, cmdErr
+		return string(out), nil, nil, cmdErr
 	}
 
 	var outBuf bytes.Buffer
@@ -214,22 +324,22 @@ func (e *Executor) executeWithTracing(ctx context.Context, cmd *exec.Cmd) (strin
 	cmd.Stderr = &outBuf
 
 	if err := cmd.Start(); err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 
 	if err := t.Start(ctx, cmd.Process.Pid); err != nil {
 		cmd.Wait()
-		return outBuf.String(), nil, fmt.Errorf("failed to start tracer: %w", err)
+		return outBuf.String(), nil, nil, fmt.Errorf("failed to start tracer: %w", err)
 	}
 
 	cmdErr := cmd.Wait()
 
-	accesses, stopErr := t.Stop()
+	accesses, procs, stopErr := t.Stop()
 	if stopErr != nil && cmdErr == nil {
 		cmdErr = stopErr
 	}
 
-	return outBuf.String(), accesses, cmdErr
+	return outBuf.String(), accesses, procs, cmdErr
 }
 
 func BuildDAG(env *src.ChaseEnv) *graph.DAG {
