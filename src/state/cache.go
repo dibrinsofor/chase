@@ -13,22 +13,43 @@ import (
 const StateFile = ".chase/state.json"
 
 type TargetState struct {
+	InputHashes   map[string]string `json:"inputHashes"`
+	OutputHashes  map[string]string `json:"outputHashes"`
+	TracedInputs  []string          `json:"tracedInputs"`
+	TracedOutputs []string          `json:"tracedOutputs"`
+	LastRun       time.Time         `json:"lastRun"`
+}
+
+type CommandState struct {
+	Command      string            `json:"command"`
 	InputHashes  map[string]string `json:"inputHashes"`
 	OutputHashes map[string]string `json:"outputHashes"`
-	TracedInputs []string          `json:"tracedInputs"`
-	TracedOutputs []string         `json:"tracedOutputs"`
+	Inputs       []string          `json:"inputs"`
+	Outputs      []string          `json:"outputs"`
 	LastRun      time.Time         `json:"lastRun"`
 }
 
+// GraphState is the serializable representation of a traced command graph.
+// It stores the structure needed to reconstruct an ir.CommandGraph from cache.
+type GraphState struct {
+	CommandIDs []string            `json:"commandIds"` // ordered command IDs
+	Producers  map[string]string   `json:"producers"`  // output file -> producing command ID
+	Consumers  map[string][]string `json:"consumers"`  // input file -> consuming command IDs
+}
+
 type BuildState struct {
-	Targets map[string]*TargetState `json:"targets"`
-	path    string
+	Targets  map[string]*TargetState  `json:"targets"`
+	Commands map[string]*CommandState `json:"commands"`
+	Graphs   map[string]*GraphState   `json:"graphs,omitempty"`
+	path     string
 }
 
 func NewBuildState() *BuildState {
 	return &BuildState{
-		Targets: make(map[string]*TargetState),
-		path:    StateFile,
+		Targets:  make(map[string]*TargetState),
+		Commands: make(map[string]*CommandState),
+		Graphs:   make(map[string]*GraphState),
+		path:     StateFile,
 	}
 }
 
@@ -38,8 +59,10 @@ func Load(path string) (*BuildState, error) {
 	}
 
 	bs := &BuildState{
-		Targets: make(map[string]*TargetState),
-		path:    path,
+		Targets:  make(map[string]*TargetState),
+		Commands: make(map[string]*CommandState),
+		Graphs:   make(map[string]*GraphState),
+		path:     path,
 	}
 
 	data, err := os.ReadFile(path)
@@ -52,6 +75,13 @@ func Load(path string) (*BuildState, error) {
 
 	if err := json.Unmarshal(data, bs); err != nil {
 		return nil, err
+	}
+
+	if bs.Commands == nil {
+		bs.Commands = make(map[string]*CommandState)
+	}
+	if bs.Graphs == nil {
+		bs.Graphs = make(map[string]*GraphState)
 	}
 
 	bs.path = path
@@ -142,6 +172,54 @@ func (bs *BuildState) RecordBuild(target string, inputs, outputs []string) error
 
 	bs.Targets[target] = ts
 	return nil
+}
+
+// NeedsCommandBuild checks whether a specific traced subprocess needs rebuilding.
+// It returns true if the command has never been traced, or if any of its inputs changed.
+func (bs *BuildState) NeedsCommandBuild(cmdID string) (bool, string) {
+	cs := bs.Commands[cmdID]
+	if cs == nil {
+		return true, "never traced"
+	}
+
+	for _, path := range cs.Inputs {
+		oldHash, ok := cs.InputHashes[path]
+		if !ok {
+			return true, "new input: " + path
+		}
+
+		currentHash, err := HashFile(path)
+		if err != nil {
+			return true, "input missing: " + path
+		}
+
+		if currentHash != oldHash {
+			return true, "input changed: " + path
+		}
+	}
+
+	for _, path := range cs.Outputs {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return true, "output missing: " + path
+		}
+	}
+
+	return false, ""
+}
+
+// RecordCommandState stores the build state for a single traced subprocess.
+func (bs *BuildState) RecordCommandState(cmdID string, cs *CommandState) {
+	bs.Commands[cmdID] = cs
+}
+
+// RecordGraphState stores the traced command graph for a task.
+func (bs *BuildState) RecordGraphState(taskID string, gs *GraphState) {
+	bs.Graphs[taskID] = gs
+}
+
+// GetGraphState retrieves the stored command graph for a task.
+func (bs *BuildState) GetGraphState(taskID string) *GraphState {
+	return bs.Graphs[taskID]
 }
 
 func HashFile(path string) (string, error) {
