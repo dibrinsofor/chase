@@ -19,6 +19,7 @@ import (
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target amd64,arm64 trace ./bpf/trace.c
 
 const maxPathLen = 256
+const maxArgvLen = 256
 
 type bpfEvent struct {
 	Pid       uint32
@@ -26,27 +27,43 @@ type bpfEvent struct {
 	Timestamp uint64
 	Flags     uint32
 	Op        uint8
-	_         [3]uint8
+	EventType uint8
+	_         [2]uint8
 	Path      [maxPathLen]byte
 }
 
+type bpfExecEvent struct {
+	Pid       uint32
+	Ppid      uint32
+	Timestamp uint64
+	EventType uint8
+	_         [3]uint8
+	Comm      [16]byte
+	Filename  [maxPathLen]byte
+	Argv      [maxArgvLen]byte
+}
+
 type ebpfTracerLinux struct {
-	cfg       Config
-	objs      *traceObjects
-	links     []link.Link
-	reader    *ringbuf.Reader
-	events    chan FileAccess
-	collected []FileAccess
-	mu        sync.Mutex
-	running   bool
-	done      chan struct{}
+	cfg            Config
+	objs           *traceObjects
+	links          []link.Link
+	reader         *ringbuf.Reader
+	execReader     *ringbuf.Reader
+	events         chan FileAccess
+	collected      []FileAccess
+	collectedProcs []ProcessInfo
+	mu             sync.Mutex
+	running        bool
+	done           chan struct{}
+	execDone       chan struct{}
 }
 
 func newPlatformTracer(cfg Config) (Tracer, error) {
 	return &ebpfTracerLinux{
-		cfg:    cfg,
-		events: make(chan FileAccess, 1024),
-		done:   make(chan struct{}),
+		cfg:      cfg,
+		events:   make(chan FileAccess, 1024),
+		done:     make(chan struct{}),
+		execDone: make(chan struct{}),
 	}, nil
 }
 
@@ -104,6 +121,20 @@ func (t *ebpfTracerLinux) Start(ctx context.Context, pid int) error {
 		return fmt.Errorf("create ring buffer reader: %w", err)
 	}
 
+	t.execReader, err = ringbuf.NewReader(t.objs.ExecEvents)
+	if err != nil {
+		t.cleanup()
+		return fmt.Errorf("create exec ring buffer reader: %w", err)
+	}
+
+	// Attach execve tracepoint for subprocess tracking
+	execveLink, err := link.Tracepoint("syscalls", "sys_enter_execve", t.objs.TraceExecve, nil)
+	if err != nil {
+		t.cleanup()
+		return fmt.Errorf("attach execve tracepoint: %w", err)
+	}
+	t.links = append(t.links, execveLink)
+
 	if pid > 0 {
 		if err := t.objs.TargetPids.Put(uint32(pid), uint32(1)); err != nil {
 			t.cleanup()
@@ -113,8 +144,10 @@ func (t *ebpfTracerLinux) Start(ctx context.Context, pid int) error {
 
 	t.running = true
 	t.done = make(chan struct{})
+	t.execDone = make(chan struct{})
 
 	go t.readEvents(ctx)
+	go t.readExecEvents(ctx)
 
 	return nil
 }
@@ -167,6 +200,52 @@ func (t *ebpfTracerLinux) readEvents(ctx context.Context) {
 	}
 }
 
+func (t *ebpfTracerLinux) readExecEvents(ctx context.Context) {
+	defer close(t.execDone)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		record, err := t.execReader.Read()
+		if err != nil {
+			if errors.Is(err, ringbuf.ErrClosed) {
+				return
+			}
+			continue
+		}
+
+		var event bpfExecEvent
+		if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &event); err != nil {
+			continue
+		}
+
+		comm := unix.ByteSliceToString(event.Comm[:])
+		filename := unix.ByteSliceToString(event.Filename[:])
+		argv := unix.ByteSliceToString(event.Argv[:])
+
+		if filename == "" {
+			continue
+		}
+
+		proc := ProcessInfo{
+			PID:       int(event.Pid),
+			PPID:      int(event.Ppid),
+			Comm:      comm,
+			Filename:  filename,
+			Argv:      []string{argv},
+			Timestamp: event.Timestamp,
+		}
+
+		t.mu.Lock()
+		t.collectedProcs = append(t.collectedProcs, proc)
+		t.mu.Unlock()
+	}
+}
+
 func flagsToOp(flags uint32) Operation {
 	const (
 		O_RDONLY = 0x0
@@ -183,24 +262,28 @@ func flagsToOp(flags uint32) Operation {
 	}
 }
 
-func (t *ebpfTracerLinux) Stop() ([]FileAccess, error) {
+func (t *ebpfTracerLinux) Stop() ([]FileAccess, []ProcessInfo, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if !t.running {
-		return t.collected, nil
+		return t.collected, t.collectedProcs, nil
 	}
 
 	if t.reader != nil {
 		t.reader.Close()
 	}
+	if t.execReader != nil {
+		t.execReader.Close()
+	}
 
 	<-t.done
+	<-t.execDone
 
 	t.cleanup()
 	t.running = false
 
-	return t.collected, nil
+	return t.collected, t.collectedProcs, nil
 }
 
 func (t *ebpfTracerLinux) cleanup() {
@@ -223,7 +306,9 @@ type traceObjects struct {
 	TraceOpenatEnter *ebpf.Program `ebpf:"trace_openat_enter"`
 	TraceFork        *ebpf.Program `ebpf:"trace_fork"`
 	TraceExit        *ebpf.Program `ebpf:"trace_exit"`
+	TraceExecve      *ebpf.Program `ebpf:"trace_execve"`
 	Events           *ebpf.Map     `ebpf:"events"`
+	ExecEvents       *ebpf.Map     `ebpf:"exec_events"`
 	TargetPids       *ebpf.Map     `ebpf:"target_pids"`
 }
 
@@ -237,8 +322,14 @@ func (o *traceObjects) Close() error {
 	if o.TraceExit != nil {
 		o.TraceExit.Close()
 	}
+	if o.TraceExecve != nil {
+		o.TraceExecve.Close()
+	}
 	if o.Events != nil {
 		o.Events.Close()
+	}
+	if o.ExecEvents != nil {
+		o.ExecEvents.Close()
 	}
 	if o.TargetPids != nil {
 		o.TargetPids.Close()

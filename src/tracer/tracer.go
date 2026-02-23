@@ -37,9 +37,25 @@ type FileAccess struct {
 	Flags     uint32
 }
 
+// ProcessInfo captures subprocess spawn information from execve
+type ProcessInfo struct {
+	PID       int
+	PPID      int
+	Comm      string   // Process name (e.g., "cc1", "as", "ld")
+	Filename  string   // Full path to executable
+	Argv      []string // Command line arguments
+	Timestamp uint64
+}
+
+// TraceResult holds the combined results from tracing
+type TraceResult struct {
+	FileAccesses []FileAccess
+	Processes    []ProcessInfo
+}
+
 type Tracer interface {
 	Start(ctx context.Context, pid int) error
-	Stop() ([]FileAccess, error)
+	Stop() ([]FileAccess, []ProcessInfo, error)
 	Events() <-chan FileAccess
 }
 

@@ -164,12 +164,12 @@ func windowsFlagsToOp(flags uint32) Operation {
 	return OpRead
 }
 
-func (t *ebpfTracerWindows) Stop() ([]FileAccess, error) {
+func (t *ebpfTracerWindows) Stop() ([]FileAccess, []ProcessInfo, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if !t.running {
-		return t.collected, nil
+		return t.collected, nil, nil
 	}
 
 	<-t.done
@@ -183,7 +183,8 @@ func (t *ebpfTracerWindows) Stop() ([]FileAccess, error) {
 
 	t.running = false
 
-	return t.collected, nil
+	// Windows tracer doesn't yet support process capture
+	return t.collected, nil, nil
 }
 
 func (t *ebpfTracerWindows) Events() <-chan FileAccess {
