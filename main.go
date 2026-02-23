@@ -9,8 +9,7 @@ import (
 	"syscall"
 
 	"github.com/dibrinsofor/chase/src"
-	"github.com/dibrinsofor/chase/src/exec"
-	"github.com/dibrinsofor/chase/src/graph"
+	"github.com/dibrinsofor/chase/src/engine"
 	"github.com/dibrinsofor/chase/src/state"
 )
 
@@ -112,36 +111,33 @@ func main() {
 	if os.IsNotExist(err) || info.IsDir() || err != nil {
 		panic(fmt.Errorf("chase: error opening chasefile: %w", err))
 	}
-
-	b, err := os.ReadFile(filename)
-	if err != nil {
-		panic(fmt.Errorf("chase: error opening chasefile: %w", err))
-	}
-
-	ast, err := src.ChasefileParser.ParseString(filename, string(b))
-	if err != nil {
-		panic(fmt.Errorf("chase: error parsing chasefile: %w", err))
-	}
-
-	// todo: rename
-	chaseIR := src.Eval(ast)
+	eng := engine.New(filename, *j)
 
 	if *l {
+		res := eng.Compute(context.Background(), engine.ComputeKey{Kind: engine.KeyMarshaled, Target: filename})
+		if res.Err != nil {
+			panic(res.Err)
+		}
+		chaseIR, ok := res.Value.(*src.ChaseEnv)
+		if !ok {
+			panic(fmt.Errorf("chase: invalid marshaled value type: %T", res.Value))
+		}
 		src.ListDashes(chaseIR)
 		return
 	}
 
 	if *lint {
+		res := eng.Compute(context.Background(), engine.ComputeKey{Kind: engine.KeyMarshaled, Target: filename})
+		if res.Err != nil {
+			panic(res.Err)
+		}
+		chaseIR, ok := res.Value.(*src.ChaseEnv)
+		if !ok {
+			panic(fmt.Errorf("chase: invalid marshaled value type: %T", res.Value))
+		}
 		runLint(chaseIR)
 		return
 	}
-
-	_, err = src.SetupEnv(chaseIR)
-	if err != nil {
-		panic(fmt.Errorf("chase: error setting up shell: %w", err))
-	}
-
-	dag := executor.BuildDAG(chaseIR)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -153,30 +149,15 @@ func main() {
 		cancel()
 	}()
 
-	var targetDAG *graph.DAG
-	if *r != "" {
-		targetID := graph.NodeID(*r)
-		if dag.GetNode(targetID) == nil {
-			panic(fmt.Errorf("chase: target '%s' not found", *r))
-		}
-		targetDAG = dag.Subgraph(targetID)
-	} else {
-		targetDAG = dag
+	res := eng.Compute(ctx, engine.ComputeKey{Kind: engine.KeyExecuted, Target: *r})
+	if res.Err != nil {
+		panic(res.Err)
 	}
-
-	cache, err := state.Load("")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load state cache: %v\n", err)
-		cache = state.NewBuildState()
+	summary, ok := res.Value.(*engine.ExecutionSummary)
+	if !ok {
+		panic(fmt.Errorf("chase: invalid execution value type: %T", res.Value))
 	}
-
-	ex := executor.New(targetDAG, chaseIR, *j, cache)
-	if err := ex.Run(ctx); err != nil {
-		panic(fmt.Errorf("chase: error running commands: %w", err))
+	for _, w := range summary.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", w)
 	}
-
-	if err := ex.SaveCache(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to save state cache: %v\n", err)
-	}
-
 }

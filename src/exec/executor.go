@@ -17,12 +17,12 @@ import (
 )
 
 type Result struct {
-	NodeID      graph.NodeID
-	Success     bool
-	Error       error
-	Output      string
-	FileAccess  []tracer.FileAccess
-	Processes   []tracer.ProcessInfo
+	NodeID     graph.NodeID
+	Success    bool
+	Error      error
+	Output     string
+	FileAccess []tracer.FileAccess
+	Processes  []tracer.ProcessInfo
 }
 
 type Executor struct {
@@ -61,14 +61,29 @@ func (e *Executor) Run(ctx context.Context) error {
 		return err
 	}
 
-	jobs := make(chan graph.NodeID, e.dag.Size())
-	results := make(chan Result, e.dag.Size())
+	q := boundedQueueSize(e.workers)
+	jobs := make(chan graph.NodeID, q)
+	results := make(chan Result, q)
 
 	for i := 0; i < e.workers; i++ {
 		go e.worker(ctx, jobs, results)
 	}
 
 	return e.coordinate(ctx, jobs, results)
+}
+
+func boundedQueueSize(workers int) int {
+	if workers < 1 {
+		workers = 1
+	}
+	n := workers * 4
+	if n < 8 {
+		return 8
+	}
+	if n > 256 {
+		return 256
+	}
+	return n
 }
 
 func (e *Executor) coordinate(ctx context.Context, jobs chan<- graph.NodeID, results <-chan Result) error {
