@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/dibrinsofor/chase/src"
 	"github.com/dibrinsofor/chase/src/graph"
+	"github.com/dibrinsofor/chase/src/ir"
 	"github.com/dibrinsofor/chase/src/state"
 )
 
@@ -24,6 +26,15 @@ func loadTestFixture(t *testing.T, name string) *src.ChaseEnv {
 	ast, err := src.ChasefileParser.ParseString(path, string(b))
 	if err != nil {
 		t.Fatalf("failed to parse fixture %s: %v", name, err)
+	}
+	return src.Eval(ast)
+}
+
+func loadEnvFromChasefileContent(t *testing.T, chasefileContent string) *src.ChaseEnv {
+	t.Helper()
+	ast, err := src.ChasefileParser.ParseString("Chasefile", chasefileContent)
+	if err != nil {
+		t.Fatalf("failed to parse chasefile content: %v", err)
 	}
 	return src.Eval(ast)
 }
@@ -345,4 +356,143 @@ func TestDiamondDependencyOrder(t *testing.T) {
 
 	_ = mu
 	_ = executionOrder
+}
+
+func TestIncrementalSubprocessGraphSkipsTopLevelCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	topLevelMarker := filepath.Join(tmpDir, "top-level-ran.txt")
+	subprocessMarker := filepath.Join(tmpDir, "subprocess-ran.txt")
+	inputFile := filepath.Join(tmpDir, "input.txt")
+	outputFile := filepath.Join(tmpDir, "output.txt")
+
+	if err := os.WriteFile(inputFile, []byte("stable-input"), 0644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	if err := os.WriteFile(outputFile, []byte("stable-output"), 0644); err != nil {
+		t.Fatalf("write output: %v", err)
+	}
+
+	env := loadEnvFromChasefileContent(t, fmt.Sprintf(`
+set shell = ["sh", "-c"]
+build:
+    cmds: "echo TOP_LEVEL >> %s"
+`, topLevelMarker))
+	dag := BuildDAG(env)
+
+	cache := state.NewBuildState()
+	cmd := &ir.Command{
+		Executable: "sh",
+		Args:       []string{"echo", "SUBPROCESS", ">>", subprocessMarker},
+		Inputs:     []string{inputFile},
+		Outputs:    []string{outputFile},
+	}
+	cmd.ID = ir.NewCommandID(cmd.Executable, cmd.Args, cmd.Outputs)
+	cmd.UpdateHashes()
+
+	cmdGraph := ir.NewCommandGraph()
+	cmdGraph.AddCommand(cmd)
+
+	cache.RecordGraphState("build", cmdGraph.ToGraphState())
+	cache.RecordCommandState(string(cmd.ID), cmd.ToCommandState())
+
+	exec := New(dag, env, 1, cache)
+	if err := exec.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected run error: %v", err)
+	}
+
+	if _, err := os.Stat(topLevelMarker); err == nil {
+		t.Fatalf("top-level command should not run when subprocess graph is fully cached")
+	}
+	if _, err := os.Stat(subprocessMarker); err == nil {
+		t.Fatalf("subprocess command should not run when subprocess inputs are unchanged")
+	}
+}
+
+func TestIncrementalSubprocessGraphRebuildsOnlyStaleAndDependents(t *testing.T) {
+	tmpDir := t.TempDir()
+	topLevelMarker := filepath.Join(tmpDir, "top-level-ran.txt")
+	runLog := filepath.Join(tmpDir, "subprocess-run.log")
+
+	aIn := filepath.Join(tmpDir, "a.in")
+	aMid := filepath.Join(tmpDir, "a.mid")
+	aOut := filepath.Join(tmpDir, "a.out")
+	cIn := filepath.Join(tmpDir, "c.in")
+	cMid := filepath.Join(tmpDir, "c.mid")
+	cOut := filepath.Join(tmpDir, "c.out")
+
+	writeFile := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	writeFile(aIn, "a-v1")
+	writeFile(aMid, "a-mid")
+	writeFile(aOut, "a-out")
+	writeFile(cIn, "c-v1")
+	writeFile(cMid, "c-mid")
+	writeFile(cOut, "c-out")
+
+	env := loadEnvFromChasefileContent(t, fmt.Sprintf(`
+set shell = ["sh", "-c"]
+build:
+    cmds: "echo TOP_LEVEL >> %s"
+`, topLevelMarker))
+	dag := BuildDAG(env)
+	cache := state.NewBuildState()
+
+	mkCommand := func(name string, inputs, outputs []string) *ir.Command {
+		cmd := &ir.Command{
+			Executable: "sh",
+			Args:       []string{"echo", name, ">>", runLog},
+			Inputs:     inputs,
+			Outputs:    outputs,
+		}
+		cmd.ID = ir.NewCommandID(cmd.Executable, cmd.Args, cmd.Outputs)
+		cmd.UpdateHashes()
+		return cmd
+	}
+
+	cmdA := mkCommand("A", []string{aIn}, []string{aMid})
+	cmdB := mkCommand("B", []string{aMid}, []string{aOut})
+	cmdC := mkCommand("C", []string{cIn}, []string{cMid})
+	cmdD := mkCommand("D", []string{cMid}, []string{cOut})
+
+	cmdGraph := ir.NewCommandGraph()
+	for _, cmd := range []*ir.Command{cmdA, cmdB, cmdC, cmdD} {
+		cmdGraph.AddCommand(cmd)
+		cache.RecordCommandState(string(cmd.ID), cmd.ToCommandState())
+	}
+	cache.RecordGraphState("build", cmdGraph.ToGraphState())
+
+	// Change only A's source input, which should mark A stale and cascade to B.
+	writeFile(aIn, "a-v2")
+
+	exec := New(dag, env, 1, cache)
+	if err := exec.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected run error: %v", err)
+	}
+
+	if _, err := os.Stat(topLevelMarker); err == nil {
+		t.Fatalf("top-level command should not run in incremental subprocess mode")
+	}
+
+	b, err := os.ReadFile(runLog)
+	if err != nil {
+		t.Fatalf("expected subprocess run log: %v", err)
+	}
+	log := string(b)
+	if !strings.Contains(log, "A\n") {
+		t.Fatalf("expected stale command A to run, got log: %q", log)
+	}
+	if !strings.Contains(log, "B\n") {
+		t.Fatalf("expected dependent command B to run, got log: %q", log)
+	}
+	if strings.Contains(log, "C\n") {
+		t.Fatalf("unrelated command C should not run, got log: %q", log)
+	}
+	if strings.Contains(log, "D\n") {
+		t.Fatalf("unrelated command D should not run, got log: %q", log)
+	}
 }
