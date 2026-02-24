@@ -134,3 +134,44 @@ build:
 		}
 	}
 }
+
+func TestComputeRespectsCanceledContext(t *testing.T) {
+	path := writeChasefile(t, `
+set shell = ["sh", "-c"]
+build:
+    cmds: "echo ok"
+`)
+
+	e := New(path, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	r := e.Compute(ctx, ComputeKey{Kind: KeyParsed})
+	if r.Err == nil {
+		t.Fatal("expected cancellation error")
+	}
+}
+
+func TestComputePropagatesParseErrorToMarshaledPhase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "MissingChasefile")
+	e := New(path, 1)
+
+	r := e.Compute(context.Background(), ComputeKey{Kind: KeyMarshaled})
+	if r.Err == nil {
+		t.Fatal("expected parse/open error")
+	}
+}
+
+func TestComputeTransformedMissingTargetReturnsError(t *testing.T) {
+	path := writeChasefile(t, `
+set shell = ["sh", "-c"]
+build:
+    cmds: "echo ok"
+`)
+
+	e := New(path, 1)
+	r := e.Compute(context.Background(), ComputeKey{Kind: KeyTransformed, Target: "does_not_exist"})
+	if r.Err == nil {
+		t.Fatal("expected missing target error")
+	}
+}
