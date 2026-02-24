@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && experimental_ebpf
 
 package tracer
 
@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"os/exec"
 	"sync"
 
 	"github.com/cilium/ebpf"
@@ -17,6 +18,35 @@ import (
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target amd64,arm64 trace ./bpf/trace.c
+
+// eBPF-specific types that extend the base tracer types.
+// These are only available when building with experimental_ebpf tag.
+
+// EBPFFileAccess extends FileAccess with eBPF-specific fields.
+type EBPFFileAccess struct {
+	FileAccess
+	PID       int
+	TID       int
+	Timestamp uint64
+	Flags     uint32
+}
+
+// ProcessInfo captures subprocess spawn information from execve.
+type ProcessInfo struct {
+	PID       int
+	PPID      int
+	Comm      string
+	Filename  string
+	Argv      []string
+	Timestamp uint64
+}
+
+// EBPFConfig extends Config with eBPF-specific options.
+type EBPFConfig struct {
+	Config
+	FilterPID      int
+	FollowChildren bool
+}
 
 const maxPathLen = 256
 const maxArgvLen = 256
@@ -43,14 +73,16 @@ type bpfExecEvent struct {
 	Argv      [maxArgvLen]byte
 }
 
+// ebpfTracerLinux implements the eBPF-based tracer for Linux.
+// This provides more detailed subprocess tracking than fsatrace.
 type ebpfTracerLinux struct {
-	cfg            Config
+	cfg            EBPFConfig
 	objs           *traceObjects
 	links          []link.Link
 	reader         *ringbuf.Reader
 	execReader     *ringbuf.Reader
-	events         chan FileAccess
-	collected      []FileAccess
+	events         chan EBPFFileAccess
+	collected      []EBPFFileAccess
 	collectedProcs []ProcessInfo
 	mu             sync.Mutex
 	running        bool
@@ -58,13 +90,54 @@ type ebpfTracerLinux struct {
 	execDone       chan struct{}
 }
 
-func newPlatformTracer(cfg Config) (Tracer, error) {
+// NewEBPFTracer creates an eBPF-based tracer (Linux only, requires experimental_ebpf tag).
+func NewEBPFTracer(cfg EBPFConfig) (*ebpfTracerLinux, error) {
 	return &ebpfTracerLinux{
 		cfg:      cfg,
-		events:   make(chan FileAccess, 1024),
+		events:   make(chan EBPFFileAccess, 1024),
 		done:     make(chan struct{}),
 		execDone: make(chan struct{}),
 	}, nil
+}
+
+// newPlatformTracer returns the eBPF tracer when built with experimental_ebpf tag.
+// Note: This implements the simpler Tracer interface by wrapping eBPF functionality.
+func newPlatformTracer(cfg Config) (Tracer, error) {
+	return &ebpfWrapperTracer{
+		cfg: EBPFConfig{
+			Config:         cfg,
+			FilterPID:      0,
+			FollowChildren: true,
+		},
+	}, nil
+}
+
+// ebpfWrapperTracer wraps the eBPF tracer to implement the simpler Tracer interface.
+type ebpfWrapperTracer struct {
+	cfg      EBPFConfig
+	inner    *ebpfTracerLinux
+	ctx      context.Context
+	cancel   context.CancelFunc
+	cmd      *exec.Cmd
+	accesses []FileAccess
+}
+
+func (t *ebpfWrapperTracer) WrapCommand(shell []string, cmdStr string) (*exec.Cmd, error) {
+	// For eBPF, we don't wrap the command - we trace it directly
+	args := append(shell[1:], cmdStr)
+	t.cmd = exec.Command(shell[0], args...)
+	return t.cmd, nil
+}
+
+func (t *ebpfWrapperTracer) ParseOutput() ([]FileAccess, error) {
+	return t.accesses, nil
+}
+
+func (t *ebpfWrapperTracer) Cleanup() error {
+	if t.cancel != nil {
+		t.cancel()
+	}
+	return nil
 }
 
 func (t *ebpfTracerLinux) Start(ctx context.Context, pid int) error {
@@ -180,9 +253,11 @@ func (t *ebpfTracerLinux) readEvents(ctx context.Context) {
 			continue
 		}
 
-		fa := FileAccess{
-			Path:      path,
-			Operation: flagsToOp(event.Flags),
+		fa := EBPFFileAccess{
+			FileAccess: FileAccess{
+				Path:      path,
+				Operation: flagsToOp(event.Flags),
+			},
 			PID:       int(event.Pid),
 			TID:       int(event.Tid),
 			Timestamp: event.Timestamp,
@@ -262,7 +337,7 @@ func flagsToOp(flags uint32) Operation {
 	}
 }
 
-func (t *ebpfTracerLinux) Stop() ([]FileAccess, []ProcessInfo, error) {
+func (t *ebpfTracerLinux) Stop() ([]EBPFFileAccess, []ProcessInfo, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -298,7 +373,7 @@ func (t *ebpfTracerLinux) cleanup() {
 	}
 }
 
-func (t *ebpfTracerLinux) Events() <-chan FileAccess {
+func (t *ebpfTracerLinux) Events() <-chan EBPFFileAccess {
 	return t.events
 }
 
