@@ -1,7 +1,7 @@
 package tracer
 
 import (
-	"context"
+	"os/exec"
 )
 
 type Operation int
@@ -9,8 +9,6 @@ type Operation int
 const (
 	OpRead Operation = iota
 	OpWrite
-	OpOpen
-	OpClose
 )
 
 func (o Operation) String() string {
@@ -19,59 +17,43 @@ func (o Operation) String() string {
 		return "read"
 	case OpWrite:
 		return "write"
-	case OpOpen:
-		return "open"
-	case OpClose:
-		return "close"
 	default:
 		return "unknown"
 	}
 }
 
+// FileAccess represents a file access traced during command execution.
+// Simplified from the eBPF version - we don't need PID/TID/Timestamp
+// for target-level tracing with fsatrace.
 type FileAccess struct {
 	Path      string
 	Operation Operation
-	PID       int
-	TID       int
-	Timestamp uint64
-	Flags     uint32
 }
 
-// ProcessInfo captures subprocess spawn information from execve
-type ProcessInfo struct {
-	PID       int
-	PPID      int
-	Comm      string   // Process name (e.g., "cc1", "as", "ld")
-	Filename  string   // Full path to executable
-	Argv      []string // Command line arguments
-	Timestamp uint64
-}
-
-// TraceResult holds the combined results from tracing
-type TraceResult struct {
-	FileAccesses []FileAccess
-	Processes    []ProcessInfo
-}
-
+// Tracer wraps command execution with file access tracing.
+// This wrapper-style interface works with fsatrace (library interposition).
 type Tracer interface {
-	Start(ctx context.Context, pid int) error
-	Stop() ([]FileAccess, []ProcessInfo, error)
-	Events() <-chan FileAccess
+	// WrapCommand prepends the tracer to the command.
+	// Returns an exec.Cmd ready to run with tracing enabled.
+	WrapCommand(shell []string, cmd string) (*exec.Cmd, error)
+
+	// ParseOutput reads and parses the tracer output file.
+	// Returns the file accesses captured during execution.
+	ParseOutput() ([]FileAccess, error)
+
+	// Cleanup removes temporary files created by the tracer.
+	Cleanup() error
 }
 
 type Config struct {
-	FilterPID      int
-	FollowChildren bool
-	CaptureReads   bool
-	CaptureWrites  bool
+	CaptureReads  bool
+	CaptureWrites bool
 }
 
 func DefaultConfig() Config {
 	return Config{
-		FilterPID:      0,
-		FollowChildren: true,
-		CaptureReads:   true,
-		CaptureWrites:  true,
+		CaptureReads:  true,
+		CaptureWrites: true,
 	}
 }
 
