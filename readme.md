@@ -1,12 +1,13 @@
 #### chase
 
-`Chase` is command runner and *potentially* a (forward) build system. Chase primarily reads build specifications from a `chasefile` placed in your outer directory consisting of one or more tasks.
+`Chase` is command runner and *potentially* a (forward) build system. Chase primarily reads build specifications from a `chasefile` placed in your outer directory consisting of one or more tasks/chases.
+ <!-- It builds a DAG -->
 <!-- (or one of its many variants like, `Chasefile` or `ChaseFile`) -->
 
 
 #### Building
-
-Chase uses [fsatrace](https://github.com/jacereda/fsatrace) for cross-platform file access tracing.
+<!-- mention other rfeatures, paralllesim and monadic engine -->
+Chase uses [fsatrace](https://github.com/dibrinsofor/fsatrace) for cross-platform file access tracing. We also support an experimental flag that attmepts tracing with ebpf on Linux and Windows.  
 
 ```bash
 # Clone with submodules
@@ -52,5 +53,4 @@ chase expects the custom shell declaration at the top of the file. if it does no
 see [./idea/readme.md](.idea/readme.md) for more
 
 #### todo
-- [ ] Run Parallel commands
 - [ ] Improve UI
