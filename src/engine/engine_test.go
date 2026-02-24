@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -173,5 +174,58 @@ build:
 	r := e.Compute(context.Background(), ComputeKey{Kind: KeyTransformed, Target: "does_not_exist"})
 	if r.Err == nil {
 		t.Fatal("expected missing target error")
+	}
+}
+
+func TestComputeExecutedRunsOnlyTargetSubgraph(t *testing.T) {
+	tmpDir := t.TempDir()
+	chasefile := filepath.Join(tmpDir, "Chasefile")
+	logPath := filepath.Join(tmpDir, "run.log")
+
+	content := `
+set shell = ["sh", "-c"]
+a:
+    cmds: "echo a >> ` + logPath + `"
+b:
+    uses: a
+    cmds: "echo b >> ` + logPath + `"
+c:
+    uses: a
+    cmds: "echo c >> ` + logPath + `"
+`
+	if err := os.WriteFile(chasefile, []byte(content), 0644); err != nil {
+		t.Fatalf("write chasefile: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	e := New(chasefile, 1)
+	r := e.Compute(context.Background(), ComputeKey{Kind: KeyExecuted, Target: "b"})
+	if r.Err != nil {
+		t.Fatalf("unexpected execute error: %v", r.Err)
+	}
+
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read run log: %v", err)
+	}
+	log := string(b)
+	if !strings.Contains(log, "a\n") {
+		t.Fatalf("expected dependency task a to run, log=%q", log)
+	}
+	if !strings.Contains(log, "b\n") {
+		t.Fatalf("expected target task b to run, log=%q", log)
+	}
+	if strings.Contains(log, "c\n") {
+		t.Fatalf("unexpected unrelated task c run, log=%q", log)
 	}
 }
