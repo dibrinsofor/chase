@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/dibrinsofor/chase/src"
@@ -88,5 +89,48 @@ c:
 	subPlan := sub.Value.(*TransformedPlan)
 	if subPlan.DAG.Size() != 2 {
 		t.Fatalf("subgraph dag size = %d, want 2", subPlan.DAG.Size())
+	}
+}
+
+func TestComputeDeduplicatesInFlightAndCachedResults(t *testing.T) {
+	path := writeChasefile(t, `
+set shell = ["sh", "-c"]
+build:
+    cmds: "echo ok"
+`)
+
+	e := New(path, 1)
+	const n = 24
+	results := make([]ComputeResult, n)
+
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = e.Compute(context.Background(), ComputeKey{Kind: KeyParsed})
+		}(i)
+	}
+	wg.Wait()
+
+	first, ok := results[0].Value.(*src.Chasefile)
+	if results[0].Err != nil {
+		t.Fatalf("unexpected error in first result: %v", results[0].Err)
+	}
+	if !ok {
+		t.Fatalf("unexpected value type: %T", results[0].Value)
+	}
+
+	for i := 1; i < n; i++ {
+		if results[i].Err != nil {
+			t.Fatalf("unexpected error in result %d: %v", i, results[i].Err)
+		}
+		got, ok := results[i].Value.(*src.Chasefile)
+		if !ok {
+			t.Fatalf("unexpected value type in result %d: %T", i, results[i].Value)
+		}
+		if got != first {
+			t.Fatalf("result %d did not reuse cached parsed value pointer", i)
+		}
 	}
 }
