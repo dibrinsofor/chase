@@ -40,27 +40,36 @@ func newPlatformTracer(cfg Config) (Tracer, error) {
 // findFsatraceBinary locates the fsatrace binary.
 // It checks:
 // 1. The fsatrace/ submodule directory (built binary)
-// 2. System PATH
+// 2. Parent directories (for running from subdirectories)
+// 3. System PATH
 func findFsatraceBinary() (string, error) {
+	binaryName := "fsatrace"
+	if runtime.GOOS == "windows" {
+		binaryName = "fsatrace.exe"
+	}
+
 	// Check fsatrace submodule directory relative to executable
 	if execPath, err := os.Executable(); err == nil {
-		submodulePath := filepath.Join(filepath.Dir(execPath), "fsatrace", "fsatrace")
-		if runtime.GOOS == "windows" {
-			submodulePath += ".exe"
-		}
+		submodulePath := filepath.Join(filepath.Dir(execPath), "fsatrace", binaryName)
 		if _, err := os.Stat(submodulePath); err == nil {
 			return submodulePath, nil
 		}
 	}
 
-	// Check relative to current working directory
+	// Check relative to current working directory and parent directories
+	// This handles running tests from subdirectories like src/tracer/
 	cwd, _ := os.Getwd()
-	submodulePath := filepath.Join(cwd, "fsatrace", "fsatrace")
-	if runtime.GOOS == "windows" {
-		submodulePath += ".exe"
-	}
-	if _, err := os.Stat(submodulePath); err == nil {
-		return submodulePath, nil
+	dir := cwd
+	for i := 0; i < 5; i++ { // Check up to 5 levels up
+		submodulePath := filepath.Join(dir, "fsatrace", binaryName)
+		if _, err := os.Stat(submodulePath); err == nil {
+			return submodulePath, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached root
+		}
+		dir = parent
 	}
 
 	// Check PATH
