@@ -1,3 +1,5 @@
+//go:build experimental_ebpf
+
 package ir
 
 import (
