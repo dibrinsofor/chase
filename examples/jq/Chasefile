@@ -1,0 +1,111 @@
+## jq Build - Translated from jqlang/jq Makefile
+## Original: https://github.com/jqlang/jq
+##
+## jq uses autotools (configure/make), but this shows how the core
+## build process translates to Chase.
+
+set shell = ["sh", "-c"]
+set CC = "gcc"
+set CFLAGS = "-Wextra -Wall -Wno-missing-field-initializers -Wno-unused-parameter -std=gnu99 -O2"
+set LDFLAGS = "-lm"
+set VERSION = "1.7.1"
+
+# Source files
+set JQ_SRC = "src/main.c src/execute.c src/bytecode.c src/compile.c"
+set BUILTIN_SRC = "src/builtin.c src/builtins/dates.c src/builtins/format.c"
+set PARSER_SRC = "src/parser.c src/lexer.c"
+set UTIL_SRC = "src/jv.c src/jv_aux.c src/jv_dtoa.c src/jv_parse.c src/jv_print.c src/jv_unicode.c"
+
+all:
+    summary: "Build jq binary"
+    uses: [jq, libjq]
+    cmds: "echo 'jq build complete: ./jq --version'"
+
+jq:
+    summary: "Build jq executable"
+    uses: [parser, libjq]
+    inputs: ["src/main.c", "src/execute.c", "src/compile.c", "src/bytecode.c"]
+    outputs: ["jq"]
+    cmds: [
+        "$CC $CFLAGS -Isrc -DVERSION='\"$VERSION\"' -o jq src/main.c libjq.a $LDFLAGS -lpthread"
+    ]
+
+libjq:
+    summary: "Build libjq static library"
+    uses: parser
+    inputs: ["src/*.c", "src/builtins/*.c"]
+    outputs: ["libjq.a"]
+    cmds: [
+        "$CC $CFLAGS -c -Isrc $JQ_SRC $BUILTIN_SRC $UTIL_SRC $PARSER_SRC",
+        "ar rcs libjq.a *.o"
+    ]
+
+parser:
+    summary: "Generate parser from grammar (requires bison/flex)"
+    inputs: ["src/parser.y", "src/lexer.l"]
+    outputs: ["src/parser.c", "src/parser.h", "src/lexer.c"]
+    cmds: [
+        "bison -d -o src/parser.c src/parser.y",
+        "flex -o src/lexer.c src/lexer.l"
+    ]
+
+oniguruma:
+    summary: "Build oniguruma regex library (optional dependency)"
+    outputs: ["modules/oniguruma/.libs/libonig.a"]
+    cmds: [
+        "cd modules/oniguruma && autoreconf -fi",
+        "cd modules/oniguruma && ./configure --disable-shared",
+        "cd modules/oniguruma && make"
+    ]
+
+test:
+    summary: "Run jq test suite"
+    uses: jq
+    cmds: [
+        "./jq --version",
+        "echo 'Running tests...'",
+        "cd tests && ./jqtest"
+    ]
+
+check:
+    summary: "Run all checks including style"
+    uses: test
+    cmds: [
+        "echo 'Checking C style...'",
+        "./scripts/checkstyle.sh"
+    ]
+
+install:
+    summary: "Install jq to system"
+    uses: jq
+    cmds: [
+        "install -d /usr/local/bin",
+        "install -m 755 jq /usr/local/bin/jq",
+        "install -d /usr/local/share/man/man1",
+        "install -m 644 jq.1 /usr/local/share/man/man1/jq.1"
+    ]
+
+clean:
+    summary: "Remove build artifacts"
+    cmds: [
+        "rm -f jq *.o *.a",
+        "rm -f src/parser.c src/parser.h src/lexer.c"
+    ]
+
+dist:
+    summary: "Create distribution tarball"
+    uses: all
+    outputs: ["jq-$VERSION.tar.gz"]
+    cmds: [
+        "mkdir -p jq-$VERSION",
+        "cp -r src docs jq.1 Makefile jq-$VERSION/",
+        "tar czf jq-$VERSION.tar.gz jq-$VERSION",
+        "rm -rf jq-$VERSION"
+    ]
+
+## Key translation notes:
+## - Autotools configure step is typically run once, then make
+## - Chase doesn't have configure; use set for build-time config
+## - Make's VPATH/srcdir patterns → explicit paths in Chase
+## - Generated files (parser.c, lexer.c) are explicit outputs
+## - make install → install task (requires sudo in practice)

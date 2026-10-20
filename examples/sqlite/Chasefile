@@ -1,0 +1,134 @@
+## SQLite Build - Translated from sqlite/sqlite Makefile.in
+## Original: https://github.com/sqlite/sqlite
+##
+## SQLite is unique: it can be built as a single "amalgamation" file
+## or from individual source files. This shows both approaches.
+
+set shell = ["sh", "-c"]
+set CC = "gcc"
+set CFLAGS = "-O2 -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_JSON1"
+set VERSION = "3.45.0"
+
+# Compile options for different features
+set OPTS_RTREE = "-DSQLITE_ENABLE_RTREE=1"
+set OPTS_FTS5 = "-DSQLITE_ENABLE_FTS5=1"
+set OPTS_JSON = "-DSQLITE_ENABLE_JSON1=1"
+set OPTS_MATH = "-DSQLITE_ENABLE_MATH_FUNCTIONS=1"
+
+all:
+    summary: "Build SQLite library and shell"
+    uses: [libsqlite3, sqlite3]
+    cmds: "echo 'SQLite $VERSION build complete'"
+
+# === Amalgamation Build (Recommended) ===
+# The amalgamation is a single sqlite3.c file containing all source code
+
+sqlite3:
+    summary: "Build SQLite shell (from amalgamation)"
+    uses: amalgamation
+    inputs: ["sqlite3.c", "shell.c", "sqlite3.h"]
+    outputs: ["sqlite3"]
+    cmds: "$CC $CFLAGS -o sqlite3 shell.c sqlite3.c -lpthread -ldl -lm"
+
+libsqlite3:
+    summary: "Build SQLite shared library"
+    uses: amalgamation
+    inputs: ["sqlite3.c", "sqlite3.h"]
+    outputs: ["libsqlite3.so", "libsqlite3.a"]
+    cmds: [
+        "$CC $CFLAGS -fPIC -shared -o libsqlite3.so sqlite3.c -lpthread -ldl -lm",
+        "$CC $CFLAGS -c sqlite3.c -o sqlite3.o",
+        "ar rcs libsqlite3.a sqlite3.o"
+    ]
+
+amalgamation:
+    summary: "Generate sqlite3.c amalgamation from source files"
+    inputs: ["src/*.c", "src/*.h", "tool/mksqlite3c.tcl"]
+    outputs: ["sqlite3.c", "sqlite3.h", "shell.c"]
+    cmds: [
+        "tclsh tool/mksqlite3c.tcl",
+        "cp src/shell.c.in shell.c"
+    ]
+
+# === Individual Source Build (for development) ===
+
+sqlite3-dev:
+    summary: "Build SQLite from individual source files"
+    inputs: [
+        "src/alter.c", "src/analyze.c", "src/attach.c", "src/auth.c",
+        "src/btree.c", "src/build.c", "src/callback.c", "src/complete.c",
+        "src/date.c", "src/delete.c", "src/expr.c", "src/fault.c",
+        "src/func.c", "src/global.c", "src/hash.c", "src/insert.c",
+        "src/main.c", "src/malloc.c", "src/mem1.c", "src/os_unix.c",
+        "src/pager.c", "src/parse.c", "src/pcache.c", "src/prepare.c",
+        "src/select.c", "src/table.c", "src/tokenize.c", "src/update.c",
+        "src/util.c", "src/vacuum.c", "src/vdbe.c", "src/vtab.c",
+        "src/where.c"
+    ]
+    outputs: ["sqlite3-dev"]
+    cmds: "$CC $CFLAGS -Isrc -o sqlite3-dev {inputs} src/shell.c -lpthread -ldl -lm"
+
+# === Parser Generation ===
+
+parse:
+    summary: "Generate parser from Lemon grammar"
+    inputs: ["src/parse.y", "tool/lemon.c", "tool/lempar.c"]
+    outputs: ["src/parse.c", "src/parse.h"]
+    cmds: [
+        "$CC -o tool/lemon tool/lemon.c",
+        "cd src && ../tool/lemon parse.y"
+    ]
+
+# === Testing ===
+
+test:
+    summary: "Run SQLite test suite"
+    uses: sqlite3
+    cmds: [
+        "./sqlite3 ':memory:' 'SELECT sqlite_version();'",
+        "echo 'Running TCL test suite...'",
+        "tclsh test/testrunner.tcl"
+    ]
+
+testfixture:
+    summary: "Build test fixture for full test suite"
+    uses: [amalgamation, parse]
+    inputs: ["sqlite3.c", "src/tclsqlite.c", "src/test*.c"]
+    outputs: ["testfixture"]
+    cmds: "$CC $CFLAGS -DSQLITE_TEST -I/usr/include/tcl -o testfixture sqlite3.c src/tclsqlite.c src/test1.c -ltcl -lpthread -ldl -lm"
+
+fuzzcheck:
+    summary: "Build fuzz testing binary"
+    uses: amalgamation
+    inputs: ["sqlite3.c", "test/fuzzcheck.c"]
+    outputs: ["fuzzcheck"]
+    cmds: "$CC $CFLAGS -DSQLITE_ENABLE_MEMSYS5 -o fuzzcheck test/fuzzcheck.c sqlite3.c -lpthread -ldl -lm"
+
+# === Installation ===
+
+install:
+    summary: "Install SQLite to system"
+    uses: [sqlite3, libsqlite3]
+    cmds: [
+        "install -d /usr/local/bin /usr/local/lib /usr/local/include",
+        "install -m 755 sqlite3 /usr/local/bin/",
+        "install -m 644 libsqlite3.a /usr/local/lib/",
+        "install -m 755 libsqlite3.so /usr/local/lib/",
+        "install -m 644 sqlite3.h /usr/local/include/"
+    ]
+
+clean:
+    summary: "Remove all build artifacts"
+    cmds: [
+        "rm -f sqlite3 sqlite3-dev testfixture fuzzcheck",
+        "rm -f *.o *.a *.so",
+        "rm -f sqlite3.c sqlite3.h shell.c",
+        "rm -f tool/lemon"
+    ]
+
+## Key translation notes:
+## - SQLite's Makefile.in is processed by configure to create Makefile
+## - The amalgamation (sqlite3.c) is the recommended build approach
+## - TCL scripts are used extensively for code generation
+## - Lemon parser generator (custom tool) instead of bison/yacc
+## - Many compile-time options controlled via -D flags

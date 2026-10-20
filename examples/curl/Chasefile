@@ -1,0 +1,159 @@
+## curl Build - Translated from curl/curl Makefile.am
+## Original: https://github.com/curl/curl
+##
+## curl uses autotools with extensive configure options.
+## This Chasefile captures common build scenarios.
+
+set shell = ["sh", "-c"]
+set CC = "gcc"
+set CFLAGS = "-O2 -Wall -W -pedantic"
+set VERSION = "8.6.0"
+
+# Feature flags (enable/disable via these variables)
+set WITH_SSL = "openssl"
+set WITH_ZLIB = "yes"
+set WITH_NGHTTP2 = "yes"
+
+# Libraries to link
+set SSL_LIBS = "-lssl -lcrypto"
+set ZLIB_LIBS = "-lz"
+set NGHTTP2_LIBS = "-lnghttp2"
+
+# Source directories
+set LIBDIR = "lib"
+set SRCDIR = "src"
+
+all:
+    summary: "Build curl and libcurl"
+    uses: [curl, libcurl]
+    cmds: "echo 'curl $VERSION build complete'"
+
+# === Main targets ===
+
+curl:
+    summary: "Build curl command-line tool"
+    uses: libcurl
+    inputs: [
+        "src/tool_main.c", "src/tool_operate.c", "src/tool_getparam.c",
+        "src/tool_paramhlp.c", "src/tool_cfgable.c", "src/tool_formparse.c",
+        "src/tool_urlglob.c", "src/tool_writeout.c", "src/tool_msgs.c",
+        "src/tool_cb_*.c", "src/tool_doswin.c", "src/tool_easysrc.c"
+    ]
+    outputs: ["src/curl"]
+    cmds: [
+        "$CC $CFLAGS -I$LIBDIR -Isrc -DCURL_STATICLIB -o src/curl src/tool_*.c libcurl.a $SSL_LIBS $ZLIB_LIBS $NGHTTP2_LIBS -lpthread"
+    ]
+
+libcurl:
+    summary: "Build libcurl library (static and shared)"
+    inputs: [
+        "lib/easy.c", "lib/multi.c", "lib/url.c", "lib/urldata.c",
+        "lib/transfer.c", "lib/http.c", "lib/ftp.c", "lib/file.c",
+        "lib/cookie.c", "lib/connect.c", "lib/sendf.c", "lib/getinfo.c",
+        "lib/vtls/*.c", "lib/vauth/*.c", "lib/http2.c"
+    ]
+    outputs: ["libcurl.a", "libcurl.so"]
+    cmds: [
+        "$CC $CFLAGS -Ilib -Iinclude -DBUILDING_LIBCURL -fPIC -c lib/*.c lib/vtls/*.c lib/vauth/*.c",
+        "ar rcs libcurl.a *.o",
+        "$CC -shared -o libcurl.so *.o $SSL_LIBS $ZLIB_LIBS -lpthread"
+    ]
+
+# === Configuration-specific builds ===
+
+curl-minimal:
+    summary: "Build curl without optional features"
+    inputs: ["src/tool_*.c", "lib/*.c"]
+    outputs: ["curl-minimal"]
+    cmds: [
+        "$CC $CFLAGS -DCURL_DISABLE_LDAP -DCURL_DISABLE_FTP -DCURL_DISABLE_DICT -DCURL_DISABLE_TELNET -DCURL_DISABLE_TFTP -DCURL_DISABLE_POP3 -DCURL_DISABLE_IMAP -DCURL_DISABLE_SMB -DCURL_DISABLE_SMTP -DCURL_DISABLE_GOPHER -DCURL_DISABLE_RTSP -o curl-minimal src/tool_*.c lib/*.c -lssl -lcrypto -lpthread"
+    ]
+
+curl-debug:
+    summary: "Build curl with debug symbols and verbose output"
+    uses: libcurl
+    inputs: ["src/tool_*.c"]
+    outputs: ["curl-debug"]
+    cmds: "$CC -g -O0 -DDEBUGBUILD -DCURLDEBUG -Ilib -Iinclude -o curl-debug src/tool_*.c libcurl.a $SSL_LIBS -lpthread"
+
+# === Testing ===
+
+test:
+    summary: "Run curl test suite"
+    uses: curl
+    cmds: [
+        "echo 'Testing curl version...'",
+        "src/curl --version",
+        "cd tests && ./runtests.pl"
+    ]
+
+test-http:
+    summary: "Run HTTP-specific tests"
+    uses: curl
+    cmds: "cd tests && ./runtests.pl 1 to 99"
+
+test-ftp:
+    summary: "Run FTP-specific tests"
+    uses: curl
+    cmds: "cd tests && ./runtests.pl 100 to 199"
+
+test-unit:
+    summary: "Run unit tests"
+    uses: [curl, libcurl]
+    cmds: [
+        "cd tests/unit && make",
+        "cd tests/unit && ./unit1600"
+    ]
+
+# === Code quality ===
+
+checksrc:
+    summary: "Check source code style"
+    cmds: "./scripts/checksrc.pl lib/*.c lib/*.h src/*.c src/*.h"
+
+docs:
+    summary: "Generate documentation"
+    cmds: [
+        "cd docs && make html",
+        "cd docs/cmdline-opts && ./gen.pl mainpage"
+    ]
+
+# === Installation ===
+
+install:
+    summary: "Install curl to system"
+    uses: [curl, libcurl]
+    cmds: [
+        "install -d /usr/local/bin /usr/local/lib /usr/local/include/curl",
+        "install -m 755 src/curl /usr/local/bin/",
+        "install -m 644 libcurl.a /usr/local/lib/",
+        "install -m 755 libcurl.so /usr/local/lib/",
+        "install -m 644 include/curl/*.h /usr/local/include/curl/",
+        "ldconfig || true"
+    ]
+
+clean:
+    summary: "Remove build artifacts"
+    cmds: [
+        "rm -f src/curl curl-minimal curl-debug",
+        "rm -f *.o *.a *.so",
+        "rm -f lib/*.o",
+        "cd tests && make clean 2>/dev/null || true"
+    ]
+
+distclean:
+    summary: "Remove all generated files (for fresh configure)"
+    uses: clean
+    cmds: [
+        "rm -f Makefile config.h config.log config.status",
+        "rm -rf autom4te.cache",
+        "rm -f lib/curl_config.h"
+    ]
+
+## Key translation notes:
+## - curl's build is complex due to many optional dependencies
+## - configure sets hundreds of #define flags; here we use key ones
+## - Protocol support is compile-time (CURL_DISABLE_* flags)
+## - SSL backend can be OpenSSL, GnuTLS, mbedTLS, etc.
+## - Test suite uses Perl scripts and requires running servers
+## - In practice, use: ./configure && make && make install

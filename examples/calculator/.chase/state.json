@@ -1,0 +1,49 @@
+{
+  "targets": {
+    "build": {
+      "inputHashes": {
+        "src/calc.cpp": "7a404be225ff0b2874ab88057887d07901565529c3255b2dc614215f29f1be27",
+        "src/main.cpp": "607a23a9fc19ef94bf45285243915e0a1b305d5d958439b512a7165e24535ea9"
+      },
+      "outputHashes": {
+        "build/calculator": "10082da022d28d6d2e81fa84e5a03e366b5466ef416ae510c04cba40b2285495"
+      },
+      "tracedInputs": [
+        "src/main.cpp",
+        "src/calc.cpp"
+      ],
+      "tracedOutputs": [
+        "build/calculator"
+      ],
+      "lastRun": "2026-02-24T18:14:37.811796-07:00"
+    }
+  },
+  "commands": {
+    "build:0": {
+      "command": "mkdir -p build",
+      "inputHashes": null,
+      "outputHashes": null,
+      "inputs": [
+        "src/main.cpp",
+        "src/calc.cpp"
+      ],
+      "outputs": [
+        "build/calculator"
+      ],
+      "lastRun": "0001-01-01T00:00:00Z"
+    },
+    "build:1": {
+      "command": "clang++ -o build/calculator src/main.cpp src/calc.cpp",
+      "inputHashes": null,
+      "outputHashes": null,
+      "inputs": [
+        "src/main.cpp",
+        "src/calc.cpp"
+      ],
+      "outputs": [
+        "build/calculator"
+      ],
+      "lastRun": "0001-01-01T00:00:00Z"
+    }
+  }
+}

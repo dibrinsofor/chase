@@ -1,0 +1,5 @@
+build:
+    summary: "Compile calculator"
+    inputs: ["src/main.cpp", "src/calc.cpp"]
+    outputs: ["build/calculator"]
+    cmds: ["mkdir -p build", "clang++ -o {outputs} {inputs}"]

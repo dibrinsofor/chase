@@ -1,0 +1,81 @@
+## Redis Build - Translated from redis/redis Makefile
+## Original: https://github.com/redis/redis/blob/unstable/src/Makefile
+##
+## Redis uses a complex Makefile with many configuration options.
+## This Chasefile captures the core build workflow.
+
+set shell = ["sh", "-c"]
+set CC = "gcc"
+set OPTIMIZATION = "-O2"
+set CFLAGS = "-std=c11 -pedantic -Wall -W -Wno-missing-field-initializers"
+set DEBUG = "-g -ggdb"
+
+# Core Redis server objects (simplified)
+set SERVER_OBJ = "adlist.o quicklist.o ae.o anet.o dict.o server.o sds.o zmalloc.o"
+set CLI_OBJ = "anet.o adlist.o dict.o redis-cli.o zmalloc.o"
+
+all:
+    summary: "Build all Redis binaries"
+    uses: [redis-server, redis-cli, redis-benchmark]
+    cmds: "echo 'Redis build complete'"
+
+redis-server:
+    summary: "Build Redis server"
+    uses: [deps, persist-settings]
+    inputs: ["src/*.c", "src/*.h"]
+    outputs: ["src/redis-server"]
+    cmds: [
+        "cd src && $CC $CFLAGS $OPTIMIZATION $DEBUG -o redis-server $SERVER_OBJ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a -lm -lpthread"
+    ]
+
+redis-cli:
+    summary: "Build Redis CLI"
+    uses: deps
+    inputs: ["src/redis-cli.c", "src/anet.c", "src/sds.c"]
+    outputs: ["src/redis-cli"]
+    cmds: [
+        "cd src && $CC $CFLAGS $OPTIMIZATION -o redis-cli $CLI_OBJ ../deps/hiredis/libhiredis.a ../deps/linenoise/linenoise.o -lm"
+    ]
+
+redis-benchmark:
+    summary: "Build Redis benchmark tool"
+    uses: deps
+    inputs: ["src/redis-benchmark.c"]
+    outputs: ["src/redis-benchmark"]
+    cmds: [
+        "cd src && $CC $CFLAGS $OPTIMIZATION -o redis-benchmark redis-benchmark.o ae.o anet.o ../deps/hiredis/libhiredis.a -lm -lpthread"
+    ]
+
+deps:
+    summary: "Build dependencies (hiredis, lua, linenoise)"
+    cmds: [
+        "cd deps/hiredis && make static",
+        "cd deps/linenoise && make",
+        "cd deps/lua && make posix"
+    ]
+
+persist-settings:
+    summary: "Generate build config header"
+    outputs: ["src/.make-settings"]
+    cmds: "echo 'CC=$CC' > src/.make-settings"
+
+clean:
+    summary: "Clean build artifacts"
+    cmds: [
+        "rm -f src/redis-server src/redis-cli src/redis-benchmark",
+        "rm -f src/*.o",
+        "cd deps/hiredis && make clean",
+        "cd deps/lua && make clean"
+    ]
+
+test:
+    summary: "Run Redis test suite"
+    uses: redis-server
+    cmds: "cd tests && ./test_helper.tcl --clients 1"
+
+## Key translation notes:
+## - Makefile's pattern rules (%.o: %.c) become explicit in cmds
+## - Make's automatic variables ($@, $<, $^) → {outputs}, {inputs}
+## - Make's conditional (ifeq/ifdef) → handled at shell level or separate tasks
+## - Make's .PHONY → not needed; Chase tasks are inherently phony
+## - Make's include → split into separate Chasefiles or inline
