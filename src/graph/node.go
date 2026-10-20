@@ -30,7 +30,7 @@ type Node struct {
 	EndTime      time.Time
 }
 
-func NewNode(id NodeID, name string, cmds []string, deps []string) *Node {
+func NewNode(id NodeID, name string, cmds []string, deps []string, inputs []string, outputs []string) *Node {
 	declaredDeps := make([]NodeID, len(deps))
 	for i, d := range deps {
 		declaredDeps[i] = NodeID(d)
@@ -41,6 +41,8 @@ func NewNode(id NodeID, name string, cmds []string, deps []string) *Node {
 		Name:         name,
 		Commands:     cmds,
 		DeclaredDeps: declaredDeps,
+		InputFiles:   inputs,
+		OutputFiles:  outputs,
 		InputHashes:  make(map[string]string),
 		State:        Pending,
 	}

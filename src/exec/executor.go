@@ -177,9 +177,25 @@ func (e *Executor) executeWithTracing(ctx context.Context, id graph.NodeID, node
 		}
 	}
 
-	if e.cache != nil && len(allAccesses) > 0 {
-		inputs, outputs := categorizeAccesses(allAccesses)
-		e.cache.RecordBuild(string(id), inputs, outputs)
+	if e.cache != nil {
+		var inputs, outputs []string
+		if len(allAccesses) > 0 {
+			inputs, outputs = categorizeAccesses(allAccesses)
+		} else {
+			// Fall back to declared inputs/outputs when tracing fails
+			inputs = node.InputFiles
+			outputs = node.OutputFiles
+		}
+		if len(inputs) > 0 || len(outputs) > 0 {
+			e.cache.RecordBuild(string(id), inputs, outputs)
+		}
+		// Store commands in the commands map (just the command strings)
+		for i, cmd := range node.Commands {
+			cmdID := fmt.Sprintf("%s:%d", id, i)
+			e.cache.RecordCommandState(cmdID, &state.CommandState{
+				Command: cmd,
+			})
+		}
 	}
 
 	return Result{NodeID: id, Success: true, Output: output, FileAccess: allAccesses}
@@ -260,6 +276,8 @@ func BuildDAG(env *src.ChaseEnv) *graph.DAG {
 			dash.Name(),
 			dash.Cmds(),
 			dash.DeclaredDeps(),
+			dash.Inputs(),
+			dash.Outputs(),
 		)
 		node.Summary = dash.Summary()
 		dag.AddNode(node)

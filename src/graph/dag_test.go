@@ -15,7 +15,7 @@ func TestTopologicalSort(t *testing.T) {
 		{
 			name: "single node",
 			nodes: []*Node{
-				NewNode("a", "a", []string{"echo a"}, nil),
+				NewNode("a", "a", []string{"echo a"}, nil, nil, nil),
 			},
 			wantOrder: func(order []NodeID) bool {
 				return len(order) == 1 && order[0] == "a"
@@ -24,9 +24,9 @@ func TestTopologicalSort(t *testing.T) {
 		{
 			name: "linear chain",
 			nodes: []*Node{
-				NewNode("a", "a", []string{"echo a"}, nil),
-				NewNode("b", "b", []string{"echo b"}, []string{"a"}),
-				NewNode("c", "c", []string{"echo c"}, []string{"b"}),
+				NewNode("a", "a", []string{"echo a"}, nil, nil, nil),
+				NewNode("b", "b", []string{"echo b"}, []string{"a"}, nil, nil),
+				NewNode("c", "c", []string{"echo c"}, []string{"b"}, nil, nil),
 			},
 			wantOrder: func(order []NodeID) bool {
 				if len(order) != 3 {
@@ -49,10 +49,10 @@ func TestTopologicalSort(t *testing.T) {
 		{
 			name: "diamond dependency",
 			nodes: []*Node{
-				NewNode("a", "a", []string{"echo a"}, nil),
-				NewNode("b", "b", []string{"echo b"}, []string{"a"}),
-				NewNode("c", "c", []string{"echo c"}, []string{"a"}),
-				NewNode("d", "d", []string{"echo d"}, []string{"b", "c"}),
+				NewNode("a", "a", []string{"echo a"}, nil, nil, nil),
+				NewNode("b", "b", []string{"echo b"}, []string{"a"}, nil, nil),
+				NewNode("c", "c", []string{"echo c"}, []string{"a"}, nil, nil),
+				NewNode("d", "d", []string{"echo d"}, []string{"b", "c"}, nil, nil),
 			},
 			wantOrder: func(order []NodeID) bool {
 				if len(order) != 4 {
@@ -69,9 +69,9 @@ func TestTopologicalSort(t *testing.T) {
 		{
 			name: "parallel independent",
 			nodes: []*Node{
-				NewNode("a", "a", []string{"echo a"}, nil),
-				NewNode("b", "b", []string{"echo b"}, nil),
-				NewNode("c", "c", []string{"echo c"}, nil),
+				NewNode("a", "a", []string{"echo a"}, nil, nil, nil),
+				NewNode("b", "b", []string{"echo b"}, nil, nil, nil),
+				NewNode("c", "c", []string{"echo c"}, nil, nil, nil),
 			},
 			wantOrder: func(order []NodeID) bool {
 				return len(order) == 3
@@ -108,16 +108,16 @@ func TestDetectCycle(t *testing.T) {
 		{
 			name: "no cycle",
 			nodes: []*Node{
-				NewNode("a", "a", nil, nil),
-				NewNode("b", "b", nil, []string{"a"}),
+				NewNode("a", "a", nil, nil, nil, nil),
+				NewNode("b", "b", nil, []string{"a"}, nil, nil),
 			},
 			wantCycle: false,
 		},
 		{
 			name: "direct cycle",
 			nodes: []*Node{
-				NewNode("a", "a", nil, nil),
-				NewNode("b", "b", nil, nil),
+				NewNode("a", "a", nil, nil, nil, nil),
+				NewNode("b", "b", nil, nil, nil, nil),
 			},
 			addEdges: [][2]NodeID{
 				{"a", "b"},
@@ -128,9 +128,9 @@ func TestDetectCycle(t *testing.T) {
 		{
 			name: "indirect cycle",
 			nodes: []*Node{
-				NewNode("a", "a", nil, nil),
-				NewNode("b", "b", nil, nil),
-				NewNode("c", "c", nil, nil),
+				NewNode("a", "a", nil, nil, nil, nil),
+				NewNode("b", "b", nil, nil, nil, nil),
+				NewNode("c", "c", nil, nil, nil, nil),
 			},
 			addEdges: [][2]NodeID{
 				{"a", "b"},
@@ -169,8 +169,8 @@ func TestGetReady(t *testing.T) {
 		{
 			name: "all ready when no deps",
 			nodes: []*Node{
-				NewNode("a", "a", nil, nil),
-				NewNode("b", "b", nil, nil),
+				NewNode("a", "a", nil, nil, nil, nil),
+				NewNode("b", "b", nil, nil, nil, nil),
 			},
 			completed: nil,
 			wantReady: []NodeID{"a", "b"},
@@ -178,8 +178,8 @@ func TestGetReady(t *testing.T) {
 		{
 			name: "blocked by dep",
 			nodes: []*Node{
-				NewNode("a", "a", nil, nil),
-				NewNode("b", "b", nil, []string{"a"}),
+				NewNode("a", "a", nil, nil, nil, nil),
+				NewNode("b", "b", nil, []string{"a"}, nil, nil),
 			},
 			completed: nil,
 			wantReady: []NodeID{"a"},
@@ -187,8 +187,8 @@ func TestGetReady(t *testing.T) {
 		{
 			name: "unblocked after completion",
 			nodes: []*Node{
-				NewNode("a", "a", nil, nil),
-				NewNode("b", "b", nil, []string{"a"}),
+				NewNode("a", "a", nil, nil, nil, nil),
+				NewNode("b", "b", nil, []string{"a"}, nil, nil),
 			},
 			completed: []NodeID{"a"},
 			wantReady: []NodeID{"b"},
@@ -227,11 +227,11 @@ func TestGetReady(t *testing.T) {
 
 func TestSubgraph(t *testing.T) {
 	dag := NewDAG()
-	dag.AddNode(NewNode("a", "a", nil, nil))
-	dag.AddNode(NewNode("b", "b", nil, []string{"a"}))
-	dag.AddNode(NewNode("c", "c", nil, []string{"a"}))
-	dag.AddNode(NewNode("d", "d", nil, []string{"b", "c"}))
-	dag.AddNode(NewNode("e", "e", nil, nil))
+	dag.AddNode(NewNode("a", "a", nil, nil, nil, nil))
+	dag.AddNode(NewNode("b", "b", nil, []string{"a"}, nil, nil))
+	dag.AddNode(NewNode("c", "c", nil, []string{"a"}, nil, nil))
+	dag.AddNode(NewNode("d", "d", nil, []string{"b", "c"}, nil, nil))
+	dag.AddNode(NewNode("e", "e", nil, nil, nil, nil))
 
 	sub := dag.Subgraph("d")
 
@@ -253,7 +253,7 @@ func TestSubgraph(t *testing.T) {
 func TestAddNode(t *testing.T) {
 	dag := NewDAG()
 
-	err := dag.AddNode(NewNode("a", "a", nil, nil))
+	err := dag.AddNode(NewNode("a", "a", nil, nil, nil, nil))
 	if err != nil {
 		t.Errorf("AddNode() unexpected error: %v", err)
 	}
@@ -274,12 +274,12 @@ func TestAddNode(t *testing.T) {
 func TestAddDuplicateNode(t *testing.T) {
 	dag := NewDAG()
 
-	err := dag.AddNode(NewNode("a", "a", nil, nil))
+	err := dag.AddNode(NewNode("a", "a", nil, nil, nil, nil))
 	if err != nil {
 		t.Errorf("AddNode() unexpected error: %v", err)
 	}
 
-	err = dag.AddNode(NewNode("a", "a", nil, nil))
+	err = dag.AddNode(NewNode("a", "a", nil, nil, nil, nil))
 	if err == nil {
 		t.Error("AddNode() should error on duplicate")
 	}
@@ -288,7 +288,7 @@ func TestAddDuplicateNode(t *testing.T) {
 
 func TestNodeState(t *testing.T) {
 	dag := NewDAG()
-	dag.AddNode(NewNode("a", "a", nil, nil))
+	dag.AddNode(NewNode("a", "a", nil, nil, nil, nil))
 
 	if dag.GetNode("a").State != Pending {
 		t.Error("initial state should be Pending")
@@ -326,7 +326,7 @@ func TestNodeStateString(t *testing.T) {
 }
 
 func TestNewNode(t *testing.T) {
-	node := NewNode("test", "Test Task", []string{"echo hello"}, []string{"dep1", "dep2"})
+	node := NewNode("test", "Test Task", []string{"echo hello"}, []string{"dep1", "dep2"}, nil, nil)
 
 	if node.ID != "test" {
 		t.Errorf("ID = %s, want test", node.ID)

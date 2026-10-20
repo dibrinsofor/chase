@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 type ChaseEnv struct {
@@ -100,6 +101,8 @@ func Eval(ast *Chasefile) *ChaseEnv {
 					dash.outputs = parseStringList(v.Value)
 				}
 			}
+			// Interpolate {inputs} and {outputs} in commands
+			dash.cmds = interpolateCommands(dash.cmds, dash.inputs, dash.outputs)
 			e.dashes = append(e.dashes, dash)
 		default:
 			panic(fmt.Errorf("chase: invalid input: %v \n", s))
@@ -114,6 +117,20 @@ func Eval(ast *Chasefile) *ChaseEnv {
 	}
 
 	return e
+}
+
+// interpolateCommands replaces {inputs} and {outputs} placeholders in commands
+func interpolateCommands(cmds, inputs, outputs []string) []string {
+	inputsStr := strings.Join(inputs, " ")
+	outputsStr := strings.Join(outputs, " ")
+
+	result := make([]string, len(cmds))
+	for i, cmd := range cmds {
+		cmd = strings.ReplaceAll(cmd, "{inputs}", inputsStr)
+		cmd = strings.ReplaceAll(cmd, "{outputs}", outputsStr)
+		result[i] = cmd
+	}
+	return result
 }
 
 func shellExists(entry []*Entry) bool {
