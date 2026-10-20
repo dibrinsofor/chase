@@ -13,9 +13,10 @@ import (
 )
 
 type fsatracer struct {
-	cfg        Config
-	outputPath string
-	binaryPath string
+	cfg             Config
+	outputPath      string
+	binaryPath      string
+	copiedShellPath string // temp copy of shell for macOS SIP workaround
 }
 
 func newPlatformTracer(cfg Config) (Tracer, error) {
@@ -81,9 +82,60 @@ func findFsatraceBinary() (string, error) {
 	return "", fmt.Errorf("fsatrace binary not found: build it with 'make' in fsatrace/ or install to PATH")
 }
 
+// isProtectedPath checks if a binary path is protected by macOS SIP.
+func isProtectedPath(path string) bool {
+	protected := []string{"/bin/", "/usr/bin/", "/usr/sbin/", "/sbin/"}
+	for _, p := range protected {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureUnprotectedShell copies the shell to a temp location on macOS if needed.
+// SIP blocks DYLD_INSERT_LIBRARIES for binaries in protected paths.
+// Copying the shell to /tmp bypasses this restriction.
+func (t *fsatracer) ensureUnprotectedShell(shell []string) ([]string, error) {
+	if runtime.GOOS != "darwin" || len(shell) == 0 {
+		return shell, nil
+	}
+
+	shellPath := shell[0]
+	if !isProtectedPath(shellPath) {
+		return shell, nil
+	}
+
+	// Copy shell to temp directory
+	tmpShell, err := os.CreateTemp("", "chase-shell-*")
+	if err != nil {
+		return shell, err
+	}
+	tmpShell.Close()
+
+	data, err := os.ReadFile(shellPath)
+	if err != nil {
+		os.Remove(tmpShell.Name())
+		return shell, err
+	}
+	if err := os.WriteFile(tmpShell.Name(), data, 0755); err != nil {
+		os.Remove(tmpShell.Name())
+		return shell, err
+	}
+
+	t.copiedShellPath = tmpShell.Name()
+
+	newShell := make([]string, len(shell))
+	copy(newShell, shell)
+	newShell[0] = tmpShell.Name()
+	return newShell, nil
+}
+
 // WrapCommand prepends fsatrace to the command.
 // fsatrace <options> <output-file> -- <command>
 func (t *fsatracer) WrapCommand(shell []string, cmdStr string) (*exec.Cmd, error) {
+	// On macOS, copy protected shells to bypass SIP
+	shell, _ = t.ensureUnprotectedShell(shell)
 	// Build options string based on config
 	opts := "rwmq" // read, write, move, stat
 	if !t.cfg.CaptureReads {
@@ -166,8 +218,11 @@ func parseOutput(data []byte) []FileAccess {
 	return accesses
 }
 
-// Cleanup removes the temporary output file.
+// Cleanup removes the temporary output file and copied shell.
 func (t *fsatracer) Cleanup() error {
+	if t.copiedShellPath != "" {
+		os.Remove(t.copiedShellPath)
+	}
 	if t.outputPath != "" {
 		return os.Remove(t.outputPath)
 	}
