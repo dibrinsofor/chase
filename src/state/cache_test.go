@@ -11,37 +11,44 @@ func TestNewBuildState(t *testing.T) {
 	if bs == nil {
 		t.Fatal("NewBuildState returned nil")
 	}
-	if bs.Targets == nil {
-		t.Error("Targets map should be initialized")
+	// Verify internal maps are initialized by checking GetTarget doesn't panic
+	ts := bs.GetTarget("nonexistent")
+	if ts != nil {
+		t.Error("GetTarget should return nil for nonexistent target")
 	}
 }
 
 func TestLoadNonExistent(t *testing.T) {
-	bs, err := Load("/nonexistent/path/state.json")
+	bs, err := Load("/nonexistent/path/.chase")
 	if err != nil {
-		t.Errorf("Load should not error on missing file: %v", err)
+		t.Errorf("Load should not error on missing directory: %v", err)
 	}
 	if bs == nil {
 		t.Fatal("Load should return empty BuildState")
 	}
-	if len(bs.Targets) != 0 {
+	// Verify state is empty by checking GetTarget returns nil
+	if bs.GetTarget("anykey") != nil {
 		t.Error("Targets should be empty")
 	}
 }
 
 func TestSaveAndLoad(t *testing.T) {
 	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, ".chase", "state.json")
+	cacheDir := filepath.Join(tmpDir, ".chase")
 
-	bs := NewBuildState()
-	bs.path = path
+	// Use Load to create a BuildState with the correct baseDir
+	bs, err := Load(cacheDir)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
 	bs.RecordBuild("test", []string{}, []string{})
 
 	if err := bs.Save(); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	loaded, err := Load(path)
+	// Load from the same directory
+	loaded, err := Load(cacheDir)
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}

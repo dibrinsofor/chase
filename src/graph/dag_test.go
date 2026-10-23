@@ -258,7 +258,7 @@ func TestAddNode(t *testing.T) {
 		t.Errorf("AddNode() unexpected error: %v", err)
 	}
 
-	err = dag.AddNode(NewNode("b", "c", nil, nil))
+	err = dag.AddNode(NewNode("b", "c", nil, nil, nil, nil))
 	if err != nil {
 		t.Errorf("AddNode() unexpected error: %v", err)
 	}
