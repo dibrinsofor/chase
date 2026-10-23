@@ -162,43 +162,103 @@ func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
 	return e.executeWithTracing(ctx, id, node)
 }
 
-// executeWithTracing runs the command with fsatrace to capture file accesses.
+// executeWithTracing runs commands with fsatrace to capture file accesses.
+// It skips commands that don't need rebuilding based on cached input hashes.
 func (e *Executor) executeWithTracing(ctx context.Context, id graph.NodeID, node *graph.Node) Result {
 	shell := e.env.Shell()
 	var output string
 	var allAccesses []tracer.FileAccess
+	var allInputs, allOutputs []string
 
-	for _, cmdStr := range node.Commands {
+	for i, cmdStr := range node.Commands {
+		cmdID := fmt.Sprintf("%s:%d", id, i)
+
+		// Check if this specific command needs to run
+		if e.cache != nil {
+			needsBuild, reason := e.cache.NeedsCommandBuild(cmdID)
+			if !needsBuild {
+				// Command cached - skip tracing entirely
+				output += fmt.Sprintf("[skip] %s (cached)\n", cmdStr[:min(40, len(cmdStr))])
+				// Preserve cached inputs/outputs for aggregation
+				if cs := e.cache.GetCommandState(cmdID); cs != nil {
+					allInputs = append(allInputs, cs.Inputs...)
+					allOutputs = append(allOutputs, cs.Outputs...)
+				}
+				continue
+			}
+			if reason != "never traced" {
+				output += fmt.Sprintf("[run] %s: %s\n", cmdStr[:min(40, len(cmdStr))], reason)
+			}
+		}
+
+		// Command needs to run - execute with tracing
 		out, accesses, err := e.runTracedCommand(ctx, shell, cmdStr)
 		output += out
 		allAccesses = append(allAccesses, accesses...)
+
 		if err != nil {
 			return Result{NodeID: id, Success: false, Error: err, Output: output, FileAccess: allAccesses}
 		}
-	}
 
-	if e.cache != nil {
-		var inputs, outputs []string
-		if len(allAccesses) > 0 {
-			inputs, outputs = categorizeAccesses(allAccesses)
-		} else {
-			// Fall back to declared inputs/outputs when tracing fails
-			inputs = node.InputFiles
-			outputs = node.OutputFiles
-		}
-		if len(inputs) > 0 || len(outputs) > 0 {
-			e.cache.RecordBuild(string(id), inputs, outputs)
-		}
-		// Store commands in the commands map (just the command strings)
-		for i, cmd := range node.Commands {
-			cmdID := fmt.Sprintf("%s:%d", id, i)
+		// Record this command's state immediately
+		if e.cache != nil && len(accesses) > 0 {
+			inputs, outputs := categorizeAccesses(accesses)
+			allInputs = append(allInputs, inputs...)
+			allOutputs = append(allOutputs, outputs...)
+
+			// Hash inputs now while files are fresh
+			inputHashes := make(map[string]string)
+			for _, path := range inputs {
+				if hash, err := state.HashFile(path); err == nil {
+					inputHashes[path] = hash
+				}
+			}
+			outputHashes := make(map[string]string)
+			for _, path := range outputs {
+				if hash, err := state.HashFile(path); err == nil {
+					outputHashes[path] = hash
+				}
+			}
+
 			e.cache.RecordCommandState(cmdID, &state.CommandState{
-				Command: cmd,
+				Command:      cmdStr,
+				Inputs:       inputs,
+				Outputs:      outputs,
+				InputHashes:  inputHashes,
+				OutputHashes: outputHashes,
 			})
 		}
 	}
 
+	// Update target-level cache with aggregated inputs/outputs
+	if e.cache != nil {
+		if len(allInputs) > 0 || len(allOutputs) > 0 {
+			e.cache.RecordBuild(string(id), unique(allInputs), unique(allOutputs))
+		}
+	}
+
 	return Result{NodeID: id, Success: true, Output: output, FileAccess: allAccesses}
+}
+
+// unique removes duplicates from a string slice
+func unique(slice []string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(slice))
+	for _, s := range slice {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// min returns the smaller of two ints
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // runTracedCommand executes a single command with tracing.

@@ -212,6 +212,11 @@ func (bs *BuildState) RecordCommandState(cmdID string, cs *CommandState) {
 	bs.Commands[cmdID] = cs
 }
 
+// GetCommandState retrieves the stored state for a command.
+func (bs *BuildState) GetCommandState(cmdID string) *CommandState {
+	return bs.Commands[cmdID]
+}
+
 // RecordGraphState stores the traced command graph for a task.
 func (bs *BuildState) RecordGraphState(taskID string, gs *GraphState) {
 	bs.Graphs[taskID] = gs
