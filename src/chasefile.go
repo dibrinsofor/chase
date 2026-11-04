@@ -45,11 +45,13 @@ type Section struct {
 var (
 	ChasefileLexer = lexer.MustSimple([]lexer.SimpleRule{
 		{Name: "Comment", Pattern: `#[^\n]*`},
-		{Name: "Ident", Pattern: `[a-zA-Z_][a-zA-Z_0-9]*`},
-		{Name: "UnquotedString", Pattern: `(?:[a-zA-Z0-9_\-\.\#\{\}\>\%]+)`},
 		{Name: "QuotedString", Pattern: `(?:\"(?:[^\"]|\\.)*\")`},
 		{Name: "Number", Pattern: `[-+]?[.0-9]+\b`},
-		{Name: "Punct", Pattern: `\[|]|[-!()+/*=,:%]`},
+		// UnquotedString for paths/filenames containing dots: file.txt, src/*.c
+		{Name: "UnquotedString", Pattern: `[a-zA-Z0-9_\-\*]+\.[a-zA-Z0-9_\-\.\*]+`},
+		// Ident includes hyphens to support names like redis-server
+		{Name: "Ident", Pattern: `[a-zA-Z_][a-zA-Z_0-9-]*`},
+		{Name: "Punct", Pattern: `\[|]|[!()+/*=,:%\.]`},
 		{Name: "whitespace", Pattern: `\s+`},
 	})
 
