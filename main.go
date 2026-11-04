@@ -103,6 +103,7 @@ func main() {
 	r := flag.String("r", "", "run specific dash")
 	j := flag.Int("j", 0, "number of parallel workers (default: number of CPUs)")
 	lint := flag.Bool("lint", false, "compare traced deps vs declared deps")
+	timing := flag.Bool("timing", false, "output timing breakdown as JSON")
 
 	flag.Parse()
 
@@ -159,5 +160,10 @@ func main() {
 	}
 	for _, w := range summary.Warnings {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", w)
+	}
+
+	if *timing {
+		fmt.Printf(`{"parse_ms":%.1f,"graph_ms":%.1f,"exec_ms":%.1f,"total_ms":%.1f}`+"\n",
+			summary.ParseTime, summary.GraphTime, summary.ExecutionTime, summary.TotalTime)
 	}
 }

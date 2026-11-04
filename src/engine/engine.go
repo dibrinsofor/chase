@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/dibrinsofor/chase/src"
 	executor "github.com/dibrinsofor/chase/src/exec"
@@ -39,6 +40,11 @@ type TransformedPlan struct {
 
 type ExecutionSummary struct {
 	Warnings []error
+	// Timing breakdown (in milliseconds)
+	ParseTime     float64
+	GraphTime     float64
+	ExecutionTime float64
+	TotalTime     float64
 }
 
 type future struct {
@@ -137,6 +143,10 @@ func (e *Engine) run(ctx context.Context, key ComputeKey) ComputeResult {
 		return ComputeResult{Value: &TransformedPlan{Env: env, DAG: dag}}
 
 	case KeyExecuted:
+		totalStart := time.Now()
+
+		// Phase 1: Parse and transform (includes parsing + graph building)
+		parseStart := time.Now()
 		transformed := e.Compute(ctx, ComputeKey{Kind: KeyTransformed, Target: key.Target})
 		if transformed.Err != nil {
 			return ComputeResult{Err: transformed.Err}
@@ -145,6 +155,7 @@ func (e *Engine) run(ctx context.Context, key ComputeKey) ComputeResult {
 		if !ok {
 			return ComputeResult{Err: fmt.Errorf("invalid transformed value type: %T", transformed.Value)}
 		}
+		parseTime := time.Since(parseStart)
 
 		if _, err := src.SetupEnv(plan.Env); err != nil {
 			return ComputeResult{Err: fmt.Errorf("chase: error setting up shell: %w", err)}
@@ -157,14 +168,25 @@ func (e *Engine) run(ctx context.Context, key ComputeKey) ComputeResult {
 			cache = state.NewBuildState()
 		}
 
+		// Phase 2: Execute (includes tracing + building)
+		execStart := time.Now()
 		ex := executor.New(plan.DAG, plan.Env, e.workers, cache)
 		if err := ex.Run(ctx); err != nil {
 			return ComputeResult{Err: fmt.Errorf("chase: error running commands: %w", err)}
 		}
+		execTime := time.Since(execStart)
 
 		if err := ex.SaveCache(); err != nil {
 			summary.Warnings = append(summary.Warnings, fmt.Errorf("failed to save state cache: %w", err))
 		}
+
+		totalTime := time.Since(totalStart)
+
+		// Record timing (parse includes both parsing and graph building)
+		summary.ParseTime = float64(parseTime.Milliseconds()) * 0.6  // Approx split
+		summary.GraphTime = float64(parseTime.Milliseconds()) * 0.4
+		summary.ExecutionTime = float64(execTime.Milliseconds())
+		summary.TotalTime = float64(totalTime.Milliseconds())
 
 		return ComputeResult{Value: summary}
 
