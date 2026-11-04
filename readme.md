@@ -66,25 +66,22 @@ see [./idea/readme.md](.idea/readme.md) for more
 #### Performance
 
 Chase's key overhead comes from file access tracing. Here's how the available
-tracing approaches compare (from [benchmarks](benchmarks/)):
+tracing approaches compare:
 
-```
-Tracing Overhead (lower = better)
-─────────────────────────────────────────────────────────────────────
-eBPF          ▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  ~1-5%
-fsatrace      ▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  ~2-10%
-watcher       ▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  ~5-15%
-ptrace        ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░  10-50x
-strace        ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  50-173x
-─────────────────────────────────────────────────────────────────────
-```
+| Approach | Overhead | Notes |
+|----------|----------|-------|
+| eBPF | ~1-5% | Linux only, requires CAP_BPF |
+| fsatrace | ~2-10% | Cross-platform (Chase default) |
+| ptrace | 10-50x | Context switch per syscall |
+| strace | 50-173x | Debugging only |
 
 Chase uses **fsatrace** by default (cross-platform, low overhead). For Linux
 users needing subprocess-level tracing, **eBPF** is available via
 `-tags experimental_ebpf`.
 
-See [.idea/tracing-sandbox-comparison.md](.idea/tracing-sandbox-comparison.md)
-for detailed methodology and sources.
+Estimates derived from [Brendan Gregg's eBPF benchmarks](https://www.brendangregg.com/ebpf.html)
+and [PingCAP's syscall tracing analysis](https://www.pingcap.com/blog/how-to-trace-linux-system-calls-in-production-with-minimal-impact-on-performance/).
+See [.idea/tracing-sandbox-comparison.md](.idea/tracing-sandbox-comparison.md) for details.
 
 #### Examples
 
@@ -95,7 +92,3 @@ projects:
 - **jq** - Parser generation with bison/flex
 - **SQLite** - Amalgamation build pattern
 - **curl** - Complex optional dependencies
-
-#### todo
-
-- [ ] Improve UI
