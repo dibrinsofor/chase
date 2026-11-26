@@ -180,6 +180,9 @@ func (e *Engine) run(ctx context.Context, key ComputeKey) ComputeResult {
 			summary.Warnings = append(summary.Warnings, fmt.Errorf("failed to save state cache: %w", err))
 		}
 
+		// Collect warnings from executor (e.g., tracing failures)
+		summary.Warnings = append(summary.Warnings, ex.Warnings()...)
+
 		totalTime := time.Since(totalStart)
 
 		// Record timing (parse includes both parsing and graph building)

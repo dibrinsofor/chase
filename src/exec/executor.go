@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sync"
 
 	"github.com/dibrinsofor/chase/src"
 	"github.com/dibrinsofor/chase/src/graph"
@@ -27,6 +28,12 @@ type Executor struct {
 	env     *src.ChaseEnv
 	workers int
 	cache   *state.BuildState
+
+	// Tracing status tracking
+	tracingTested sync.Once
+	tracingFailed bool
+	warningsMu    sync.Mutex
+	warnings      []error
 }
 
 const queueBufferSize = 64
@@ -49,6 +56,18 @@ func (e *Executor) SaveCache() error {
 		return e.cache.Save()
 	}
 	return nil
+}
+
+func (e *Executor) Warnings() []error {
+	e.warningsMu.Lock()
+	defer e.warningsMu.Unlock()
+	return e.warnings
+}
+
+func (e *Executor) addWarning(err error) {
+	e.warningsMu.Lock()
+	defer e.warningsMu.Unlock()
+	e.warnings = append(e.warnings, err)
 }
 
 func (e *Executor) Run(ctx context.Context) error {
@@ -268,6 +287,10 @@ func (e *Executor) runTracedCommand(ctx context.Context, shell []string, cmdStr 
 	t, err := tracer.New(cfg)
 	if err != nil {
 		// No tracing available, run directly without tracing
+		e.tracingTested.Do(func() {
+			e.tracingFailed = true
+			e.addWarning(fmt.Errorf("file tracing unavailable: %w; incremental builds disabled", err))
+		})
 		return e.runDirectCommand(ctx, shell, cmdStr)
 	}
 	defer t.Cleanup()
@@ -275,6 +298,10 @@ func (e *Executor) runTracedCommand(ctx context.Context, shell []string, cmdStr 
 	wrapped, err := t.WrapCommand(shell, cmdStr)
 	if err != nil {
 		// Fall back to direct execution
+		e.tracingTested.Do(func() {
+			e.tracingFailed = true
+			e.addWarning(fmt.Errorf("file tracing failed to wrap command: %w; incremental builds disabled", err))
+		})
 		return e.runDirectCommand(ctx, shell, cmdStr)
 	}
 
@@ -291,7 +318,18 @@ func (e *Executor) runTracedCommand(ctx context.Context, shell []string, cmdStr 
 		return outBuf.String(), nil, err
 	}
 
-	accesses, _ := t.ParseOutput()
+	accesses, parseErr := t.ParseOutput()
+	if parseErr != nil {
+		e.tracingTested.Do(func() {
+			e.tracingFailed = true
+			e.addWarning(fmt.Errorf("file tracing output parse failed: %w; incremental builds disabled", parseErr))
+		})
+	} else if len(accesses) == 0 {
+		e.tracingTested.Do(func() {
+			e.tracingFailed = true
+			e.addWarning(fmt.Errorf("file tracing captured no accesses (SIP may be blocking on macOS); incremental builds disabled"))
+		})
+	}
 	return outBuf.String(), accesses, nil
 }
 
