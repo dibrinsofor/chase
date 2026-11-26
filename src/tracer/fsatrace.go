@@ -95,7 +95,7 @@ func isProtectedPath(path string) bool {
 
 // ensureUnprotectedShell copies the shell to a temp location on macOS if needed.
 // SIP blocks DYLD_INSERT_LIBRARIES for binaries in protected paths.
-// Copying the shell to /tmp bypasses this restriction.
+// Copying the shell to /tmp and re-signing without hardened runtime bypasses this.
 func (t *fsatracer) ensureUnprotectedShell(shell []string) ([]string, error) {
 	if runtime.GOOS != "darwin" || len(shell) == 0 {
 		return shell, nil
@@ -121,6 +121,14 @@ func (t *fsatracer) ensureUnprotectedShell(shell []string) ([]string, error) {
 	if err := os.WriteFile(tmpShell.Name(), data, 0755); err != nil {
 		os.Remove(tmpShell.Name())
 		return shell, err
+	}
+
+	// Re-sign without hardened runtime to allow DYLD_INSERT_LIBRARIES
+	// First remove existing signature, then ad-hoc sign
+	exec.Command("codesign", "--remove-signature", tmpShell.Name()).Run()
+	if err := exec.Command("codesign", "-s", "-", tmpShell.Name()).Run(); err != nil {
+		// If re-signing fails, try using the binary anyway
+		// Some systems may not require signing
 	}
 
 	t.copiedShellPath = tmpShell.Name()
