@@ -107,6 +107,12 @@ func main() {
 
 	flag.Parse()
 
+	// Accept positional argument as target (e.g., "chase build" instead of "chase -r build")
+	if *r == "" && flag.NArg() > 0 {
+		target := flag.Arg(0)
+		r = &target
+	}
+
 	// check if chasefile exists
 	info, err := os.Stat(filename)
 	if os.IsNotExist(err) || info.IsDir() || err != nil {
