@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 )
 
@@ -112,8 +113,11 @@ func Eval(ast *Chasefile) *ChaseEnv {
 
 	// use default shell
 	if !shellExists(ast.Entries) || len(e.shell) == 0 {
-		var s []string
-		e.shell = append(s, "sh", "-c")
+		if runtime.GOOS == "windows" {
+			e.shell = []string{"cmd", "/c"}
+		} else {
+			e.shell = []string{"bash", "-c"}
+		}
 	}
 
 	return e
@@ -146,7 +150,7 @@ func shellExists(entry []*Entry) bool {
 
 func setEnvVars(cmd *exec.Cmd, chase *ChaseEnv) {
 	switch chase.shell[0] {
-	case "sh", "/bin/sh":
+	case "bash", "sh", "/bin/bash", "/bin/sh":
 		for key, value := range chase.vars {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
 		}
