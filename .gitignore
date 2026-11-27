@@ -1,3 +1,7 @@
 benchmarks/
 src/*_test.go
 .idea/tracing-sandbox-comparison.md
+.chase/
+.claude/
+chase
+examples/calculator/build/
