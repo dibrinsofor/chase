@@ -466,6 +466,16 @@ func (bs *BuildState) GetGraphState(taskID string) *GraphState {
 }
 
 func HashFile(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	// Skip non-regular files (directories, devices, pipes, sockets, etc.)
+	// io.Copy blocks on FIFOs/devices waiting for data that never comes
+	if !info.Mode().IsRegular() {
+		return "", nil
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
