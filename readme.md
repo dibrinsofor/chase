@@ -2,7 +2,7 @@
 
 `Chase` is command runner and a (forward) build system. It primarily reads build
 instructions from a `chasefile` placed in your project's directory consisting of
-one or more tasks/chases and then is a able to infer an incremental build
+one or more tasks/dashes and then is a able to infer an incremental build
 sequence by tracing all of the command's dependencies.
 
 For a trivial C program with source and header files, developers must either
