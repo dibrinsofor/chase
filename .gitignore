@@ -4,4 +4,5 @@ src/*_test.go
 .chase/
 .claude/
 chase
+todo.md
 examples/calculator/build/
