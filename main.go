@@ -104,6 +104,7 @@ func main() {
 	j := flag.Int("j", 0, "number of parallel workers (default: number of CPUs)")
 	lint := flag.Bool("lint", false, "compare traced deps vs declared deps")
 	timing := flag.Bool("timing", false, "output timing breakdown as JSON")
+	force := flag.Bool("force", false, "ignore cache and rebuild all targets")
 
 	flag.Parse()
 
@@ -118,7 +119,7 @@ func main() {
 	if os.IsNotExist(err) || info.IsDir() || err != nil {
 		panic(fmt.Errorf("chase: error opening chasefile: %w", err))
 	}
-	eng := engine.New(filename, *j)
+	eng := engine.New(filename, *j, *force)
 
 	if *l {
 		res := eng.Compute(context.Background(), engine.ComputeKey{Kind: engine.KeyMarshaled, Target: filename})

@@ -28,6 +28,7 @@ type Executor struct {
 	env     *src.ChaseEnv
 	workers int
 	cache   *state.BuildState
+	force   bool
 
 	// Tracing status tracking
 	tracingTested sync.Once
@@ -38,7 +39,7 @@ type Executor struct {
 
 const queueBufferSize = 64
 
-func New(dag *graph.DAG, env *src.ChaseEnv, workers int, cache *state.BuildState) *Executor {
+func New(dag *graph.DAG, env *src.ChaseEnv, workers int, cache *state.BuildState, force bool) *Executor {
 	if workers <= 0 {
 		workers = runtime.NumCPU()
 	}
@@ -48,6 +49,7 @@ func New(dag *graph.DAG, env *src.ChaseEnv, workers int, cache *state.BuildState
 		env:     env,
 		workers: workers,
 		cache:   cache,
+		force:   force,
 	}
 }
 
@@ -168,7 +170,7 @@ func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
 	needsBuild := true
 	reason := "no previous build"
 
-	if e.cache != nil {
+	if e.cache != nil && !e.force {
 		needsBuild, reason = e.cache.NeedsBuild(string(id))
 		if !needsBuild {
 			return Result{NodeID: id, Success: true, Output: fmt.Sprintf("[cached] %s\n", id)}
@@ -193,7 +195,7 @@ func (e *Executor) executeWithTracing(ctx context.Context, id graph.NodeID, node
 		cmdID := fmt.Sprintf("%s:%d", id, i)
 
 		// Check if this specific command needs to run
-		if e.cache != nil {
+		if e.cache != nil && !e.force {
 			needsBuild, reason := e.cache.NeedsCommandBuild(cmdID)
 			if !needsBuild {
 				// Command cached - skip tracing entirely

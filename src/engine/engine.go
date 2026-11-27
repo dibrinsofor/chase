@@ -57,9 +57,10 @@ type Engine struct {
 	cache    map[ComputeKey]*future
 	filename string
 	workers  int
+	force    bool
 }
 
-func New(filename string, workers int) *Engine {
+func New(filename string, workers int, force bool) *Engine {
 	if workers <= 0 {
 		workers = runtime.NumCPU()
 	}
@@ -67,6 +68,7 @@ func New(filename string, workers int) *Engine {
 		cache:    make(map[ComputeKey]*future),
 		filename: filename,
 		workers:  workers,
+		force:    force,
 	}
 }
 
@@ -170,7 +172,7 @@ func (e *Engine) run(ctx context.Context, key ComputeKey) ComputeResult {
 
 		// Phase 2: Execute (includes tracing + building)
 		execStart := time.Now()
-		ex := executor.New(plan.DAG, plan.Env, e.workers, cache)
+		ex := executor.New(plan.DAG, plan.Env, e.workers, cache, e.force)
 		if err := ex.Run(ctx); err != nil {
 			return ComputeResult{Err: fmt.Errorf("chase: error running commands: %w", err)}
 		}
