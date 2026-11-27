@@ -117,3 +117,7 @@ projects:
 - **jq** - Parser generation with bison/flex
 - **SQLite** - Amalgamation build pattern
 - **curl** - Complex optional dependencies
+
+| Project | Makefile Lines | Chasefile Lines | Reduction |
+| ------- | -------------- | --------------- | --------- |
+| Redis   | 181            | 54              | 70%       |
