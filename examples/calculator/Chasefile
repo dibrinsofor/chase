@@ -1,5 +1,18 @@
+calc_obj:
+    summary: "Compile calc.cpp"
+    cmds: [
+        "mkdir -p build",
+        "/opt/homebrew/opt/llvm/bin/clang++ -c src/calc.cpp -o build/calc.o"
+    ]
+
+main_obj:
+    summary: "Compile main.cpp"
+    cmds: [
+        "mkdir -p build",
+        "/opt/homebrew/opt/llvm/bin/clang++ -c src/main.cpp -o build/main.o"
+    ]
+
 build:
-    summary: "Compile calculator"
-    inputs: ["src/main.cpp", "src/calc.cpp"]
-    outputs: ["build/calculator"]
-    cmds: ["mkdir -p build", "clang++ -o {outputs} {inputs}"]
+    summary: "Link calculator"
+    uses: [calc_obj, main_obj]
+    cmds: "/opt/homebrew/opt/llvm/bin/clang++ -o build/calculator build/calc.o build/main.o"
