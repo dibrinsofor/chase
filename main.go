@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/dibrinsofor/chase/src"
+	"github.com/dibrinsofor/chase/src/debug"
 	"github.com/dibrinsofor/chase/src/engine"
 	"github.com/dibrinsofor/chase/src/state"
 )
@@ -105,8 +106,11 @@ func main() {
 	lint := flag.Bool("lint", false, "compare traced deps vs declared deps")
 	timing := flag.Bool("timing", false, "output timing breakdown as JSON")
 	force := flag.Bool("force", false, "ignore cache and rebuild all targets")
+	dbg := flag.Bool("dbg", false, "print debug output")
 
 	flag.Parse()
+
+	debug.Dbg = *dbg
 
 	// Accept positional argument as target (e.g., "chase build" instead of "chase -r build")
 	if *r == "" && flag.NArg() > 0 {
@@ -147,6 +151,8 @@ func main() {
 		return
 	}
 
+	debug.Log("starting chase")
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -154,10 +160,13 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
+		debug.Log("received signal, cancelling")
 		cancel()
 	}()
 
+	debug.Log("calling engine.Compute for target=%q", *r)
 	res := eng.Compute(ctx, engine.ComputeKey{Kind: engine.KeyExecuted, Target: *r})
+	debug.Log("engine.Compute returned")
 	if res.Err != nil {
 		panic(res.Err)
 	}

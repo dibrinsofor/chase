@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dibrinsofor/chase/src"
+	"github.com/dibrinsofor/chase/src/debug"
 	executor "github.com/dibrinsofor/chase/src/exec"
 	"github.com/dibrinsofor/chase/src/graph"
 	"github.com/dibrinsofor/chase/src/state"
@@ -145,9 +146,11 @@ func (e *Engine) run(ctx context.Context, key ComputeKey) ComputeResult {
 		return ComputeResult{Value: &TransformedPlan{Env: env, DAG: dag}}
 
 	case KeyExecuted:
+		debug.Log("KeyExecuted: starting")
 		totalStart := time.Now()
 
 		// Phase 1: Parse and transform (includes parsing + graph building)
+		debug.Log("KeyExecuted: parsing and transforming")
 		parseStart := time.Now()
 		transformed := e.Compute(ctx, ComputeKey{Kind: KeyTransformed, Target: key.Target})
 		if transformed.Err != nil {
@@ -158,29 +161,38 @@ func (e *Engine) run(ctx context.Context, key ComputeKey) ComputeResult {
 			return ComputeResult{Err: fmt.Errorf("invalid transformed value type: %T", transformed.Value)}
 		}
 		parseTime := time.Since(parseStart)
+		debug.Log("KeyExecuted: parsed in %v", parseTime)
 
+		debug.Log("KeyExecuted: setting up shell env")
 		if _, err := src.SetupEnv(plan.Env); err != nil {
 			return ComputeResult{Err: fmt.Errorf("chase: error setting up shell: %w", err)}
 		}
 
 		summary := &ExecutionSummary{}
+		debug.Log("KeyExecuted: loading cache")
 		cache, err := state.Load("")
 		if err != nil {
 			summary.Warnings = append(summary.Warnings, fmt.Errorf("failed to load state cache: %w", err))
 			cache = state.NewBuildState()
 		}
+		debug.Log("KeyExecuted: cache loaded")
 
 		// Phase 2: Execute (includes tracing + building)
+		debug.Log("KeyExecuted: starting execution phase")
 		execStart := time.Now()
 		ex := executor.New(plan.DAG, plan.Env, e.workers, cache, e.force)
+		debug.Log("KeyExecuted: calling ex.Run")
 		if err := ex.Run(ctx); err != nil {
 			return ComputeResult{Err: fmt.Errorf("chase: error running commands: %w", err)}
 		}
 		execTime := time.Since(execStart)
+		debug.Log("KeyExecuted: ex.Run completed in %v", execTime)
 
+		debug.Log("KeyExecuted: saving cache")
 		if err := ex.SaveCache(); err != nil {
 			summary.Warnings = append(summary.Warnings, fmt.Errorf("failed to save state cache: %w", err))
 		}
+		debug.Log("KeyExecuted: cache saved")
 
 		// Collect warnings from executor (e.g., tracing failures)
 		summary.Warnings = append(summary.Warnings, ex.Warnings()...)

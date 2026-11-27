@@ -10,10 +10,15 @@ import (
 	"sync"
 
 	"github.com/dibrinsofor/chase/src"
+	"github.com/dibrinsofor/chase/src/debug"
 	"github.com/dibrinsofor/chase/src/graph"
 	"github.com/dibrinsofor/chase/src/state"
 	"github.com/dibrinsofor/chase/src/tracer"
 )
+
+func dbg(format string, args ...any) {
+	debug.Log("exec: "+format, args...)
+}
 
 type Result struct {
 	NodeID     graph.NodeID
@@ -73,6 +78,7 @@ func (e *Executor) addWarning(err error) {
 }
 
 func (e *Executor) Run(ctx context.Context) error {
+	dbg("Run: dag size=%d", e.dag.Size())
 	if e.dag.Size() == 0 {
 		return nil
 	}
@@ -85,11 +91,15 @@ func (e *Executor) Run(ctx context.Context) error {
 	jobs := make(chan graph.NodeID, q)
 	results := make(chan Result, q)
 
+	dbg("Run: starting %d workers", e.workers)
 	for i := 0; i < e.workers; i++ {
 		go e.worker(ctx, jobs, results)
 	}
 
-	return e.coordinate(ctx, jobs, results)
+	dbg("Run: calling coordinate")
+	err := e.coordinate(ctx, jobs, results)
+	dbg("Run: coordinate returned, err=%v", err)
+	return err
 }
 
 func boundedQueueSize() int {
@@ -99,9 +109,12 @@ func boundedQueueSize() int {
 func (e *Executor) coordinate(ctx context.Context, jobs chan<- graph.NodeID, results <-chan Result) error {
 	pending := e.dag.Size()
 	inFlight := 0
+	dbg("coordinate: pending=%d", pending)
 
 	dispatch := func() {
-		for _, id := range e.dag.GetReady() {
+		ready := e.dag.GetReady()
+		dbg("coordinate: dispatch ready=%v", ready)
+		for _, id := range ready {
 			e.dag.MarkRunning(id)
 			jobs <- id
 			inFlight++
@@ -111,12 +124,14 @@ func (e *Executor) coordinate(ctx context.Context, jobs chan<- graph.NodeID, res
 	dispatch()
 
 	for pending > 0 {
+		dbg("coordinate: waiting for result, pending=%d inFlight=%d", pending, inFlight)
 		select {
 		case <-ctx.Done():
 			close(jobs)
 			return ctx.Err()
 
 		case res := <-results:
+			dbg("coordinate: got result for %s, success=%v", res.NodeID, res.Success)
 			inFlight--
 			pending--
 
@@ -143,21 +158,25 @@ func (e *Executor) coordinate(ctx context.Context, jobs chan<- graph.NodeID, res
 		}
 	}
 
+	dbg("coordinate: all done, closing jobs")
 	close(jobs)
 	return nil
 }
 
 func (e *Executor) worker(ctx context.Context, jobs <-chan graph.NodeID, results chan<- Result) {
 	for id := range jobs {
+		dbg("worker: got job %s", id)
 		select {
 		case <-ctx.Done():
 			results <- Result{NodeID: id, Success: false, Error: ctx.Err()}
 			return
 		default:
 			result := e.execute(ctx, id)
+			dbg("worker: job %s done, success=%v", id, result.Success)
 			results <- result
 		}
 	}
+	dbg("worker: exiting (jobs channel closed)")
 }
 
 func (e *Executor) execute(ctx context.Context, id graph.NodeID) Result {
@@ -193,6 +212,7 @@ func (e *Executor) executeWithTracing(ctx context.Context, id graph.NodeID, node
 
 	for i, cmdStr := range node.Commands {
 		cmdID := fmt.Sprintf("%s:%d", id, i)
+		dbg("executeWithTracing: cmd %d/%d: %s", i+1, len(node.Commands), cmdStr[:min(60, len(cmdStr))])
 
 		// Check if this specific command needs to run
 		if e.cache != nil && !e.force {
@@ -205,6 +225,7 @@ func (e *Executor) executeWithTracing(ctx context.Context, id graph.NodeID, node
 					allInputs = append(allInputs, cs.Inputs...)
 					allOutputs = append(allOutputs, cs.Outputs...)
 				}
+				dbg("executeWithTracing: cmd %d skipped (cached)", i+1)
 				continue
 			}
 			if reason != "never traced" {
@@ -214,6 +235,7 @@ func (e *Executor) executeWithTracing(ctx context.Context, id graph.NodeID, node
 
 		// Command needs to run - execute with tracing
 		out, accesses, err := e.runTracedCommand(ctx, shell, cmdStr)
+		dbg("executeWithTracing: cmd %d returned, accesses=%d, err=%v", i+1, len(accesses), err)
 		output += out
 		allAccesses = append(allAccesses, accesses...)
 
@@ -222,24 +244,35 @@ func (e *Executor) executeWithTracing(ctx context.Context, id graph.NodeID, node
 		}
 
 		// Record this command's state immediately
+		dbg("executeWithTracing: cmd %d recording cache state", i+1)
 		if e.cache != nil && len(accesses) > 0 {
 			inputs, outputs := categorizeAccesses(accesses)
+			dbg("executeWithTracing: cmd %d categorized: %d inputs, %d outputs", i+1, len(inputs), len(outputs))
+			for _, p := range inputs {
+				dbg("  traced input: %s", p)
+			}
+			for _, p := range outputs {
+				dbg("  traced output: %s", p)
+			}
 			allInputs = append(allInputs, inputs...)
 			allOutputs = append(allOutputs, outputs...)
 
 			// Hash inputs now while files are fresh
+			dbg("executeWithTracing: cmd %d hashing inputs", i+1)
 			inputHashes := make(map[string]string)
 			for _, path := range inputs {
 				if hash, err := state.HashFile(path); err == nil {
 					inputHashes[path] = hash
 				}
 			}
+			dbg("executeWithTracing: cmd %d hashing outputs", i+1)
 			outputHashes := make(map[string]string)
 			for _, path := range outputs {
 				if hash, err := state.HashFile(path); err == nil {
 					outputHashes[path] = hash
 				}
 			}
+			dbg("executeWithTracing: cmd %d hashing done", i+1)
 
 			e.cache.RecordCommandState(cmdID, &state.CommandState{
 				Command:      cmdStr,
@@ -284,6 +317,7 @@ func min(a, b int) int {
 
 // runTracedCommand executes a single command with tracing.
 func (e *Executor) runTracedCommand(ctx context.Context, shell []string, cmdStr string) (string, []tracer.FileAccess, error) {
+	dbg("runTracedCommand: starting cmd=%q", cmdStr)
 	cfg := tracer.DefaultConfig()
 
 	t, err := tracer.New(cfg)
@@ -293,10 +327,12 @@ func (e *Executor) runTracedCommand(ctx context.Context, shell []string, cmdStr 
 			e.tracingFailed = true
 			e.addWarning(fmt.Errorf("file tracing unavailable: %w; incremental builds disabled", err))
 		})
+		dbg("runTracedCommand: no tracer, running direct")
 		return e.runDirectCommand(ctx, shell, cmdStr)
 	}
 	defer t.Cleanup()
 
+	dbg("runTracedCommand: wrapping command")
 	wrapped, err := t.WrapCommand(shell, cmdStr)
 	if err != nil {
 		// Fall back to direct execution
@@ -304,6 +340,7 @@ func (e *Executor) runTracedCommand(ctx context.Context, shell []string, cmdStr 
 			e.tracingFailed = true
 			e.addWarning(fmt.Errorf("file tracing failed to wrap command: %w; incremental builds disabled", err))
 		})
+		dbg("runTracedCommand: wrap failed, running direct")
 		return e.runDirectCommand(ctx, shell, cmdStr)
 	}
 
@@ -316,9 +353,12 @@ func (e *Executor) runTracedCommand(ctx context.Context, shell []string, cmdStr 
 	wrapped.Stdout = &outBuf
 	wrapped.Stderr = &outBuf
 
+	dbg("runTracedCommand: running wrapped command")
 	if err := wrapped.Run(); err != nil {
+		dbg("runTracedCommand: command failed err=%v", err)
 		return outBuf.String(), nil, err
 	}
+	dbg("runTracedCommand: command completed")
 
 	accesses, parseErr := t.ParseOutput()
 	if parseErr != nil {
@@ -357,6 +397,11 @@ func categorizeAccesses(accesses []tracer.FileAccess) (inputs, outputs []string)
 		}
 		seen[a.Path] = true
 
+		// Skip temp directories - these are intermediate files that get deleted
+		if isTempPath(a.Path) {
+			continue
+		}
+
 		switch a.Operation {
 		case tracer.OpRead:
 			inputs = append(inputs, a.Path)
@@ -365,6 +410,27 @@ func categorizeAccesses(accesses []tracer.FileAccess) (inputs, outputs []string)
 		}
 	}
 	return
+}
+
+// isTempPath returns true for paths that are temporary/intermediate files
+func isTempPath(path string) bool {
+	// Temp directories
+	tempPrefixes := []string{
+		"/var/folders/",
+		"/private/var/folders/",
+		"/tmp/",
+		"/private/tmp/",
+	}
+	for _, prefix := range tempPrefixes {
+		if len(path) >= len(prefix) && path[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	// Temp file patterns (e.g., foo.o.tmp, foo-abc123.o.tmp)
+	if len(path) > 4 && path[len(path)-4:] == ".tmp" {
+		return true
+	}
+	return false
 }
 
 func BuildDAG(env *src.ChaseEnv) *graph.DAG {
